@@ -1,16 +1,17 @@
 import Link from "next/link"
-import { TalusAgLogo } from "@/components/talusag-logo"
+import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { UserCheck, Shield, ClipboardList } from "lucide-react"
 
 export default function HomePage() {
+  const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME || "Your Company"
   return (
     <div className="min-h-screen bg-gradient-to-b from-secondary/50 to-background">
       <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/">
-            <TalusAgLogo />
+            <Logo />
           </Link>
           <nav className="flex items-center gap-4">
             <Link href="/auth/login">
@@ -25,9 +26,9 @@ export default function HomePage() {
 
       <main className="container mx-auto px-4 py-16">
         <div className="text-center mb-16">
-          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4 text-balance">Welcome to Talus</h1>
+          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4 text-balance">Welcome to {companyName}</h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto text-pretty">
-            Secure visitor management for our green ammonia facilities. Sign in quickly and safely.
+            Secure visitor management for organizations that value accountability, stewardship, and compliance. Sign in quickly and safely.
           </p>
         </div>
 
@@ -84,14 +85,14 @@ export default function HomePage() {
 
         <div className="text-center">
           <p className="text-sm text-muted-foreground">
-            Building reliable domestic production solutions for local farming communities.
+            Everything you need to manage visitor access with confidence and accountability.
           </p>
         </div>
       </main>
 
       <footer className="border-t py-8 mt-auto">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>&copy; {new Date().getFullYear()} Talus. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} {companyName}. All rights reserved.</p>
         </div>
       </footer>
     </div>

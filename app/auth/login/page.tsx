@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { TalusAgLogo } from "@/components/talusag-logo"
+import { Logo } from "@/components/logo"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -74,7 +74,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/30 flex flex-col">
       <header className="p-4 sm:p-6">
         <Link href="/">
-          <TalusAgLogo />
+          <Logo />
         </Link>
       </header>
 
@@ -139,12 +139,12 @@ export default function LoginPage() {
                     Sign in with Microsoft
                   </Button>
                 </div>
-                <div className="mt-4 text-center text-xs sm:text-sm">
+                {/* <div className="mt-4 text-center text-xs sm:text-sm">
                   Don&apos;t have an account?{" "}
                   <Link href="/auth/sign-up" className="underline underline-offset-4 text-primary">
                     Sign up
                   </Link>
-                </div>
+                </div> */}
               </form>
             </CardContent>
           </Card>

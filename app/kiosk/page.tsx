@@ -5,7 +5,7 @@ import type React from "react"
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
-import { TalusAgLogo } from "@/components/talusag-logo"
+import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -32,21 +32,24 @@ import {
   Search
 } from "lucide-react"
 import type { VisitorType, Host, Location, Profile } from "@/types/database"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import Link from "next/link"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { formatTime, formatDate, formatDateTime, getTimezoneAbbreviation, toIANATimezone } from "@/lib/timezone"
 
 type KioskMode = "home" | "sign-in" | "booking" | "training" | "sign-out" | "employee-login" | "employee-dashboard" | "success"
 
 // Storage key for remembered employee
-const REMEMBERED_EMPLOYEE_KEY = "talusag_remembered_employee"
+const REMEMBERED_EMPLOYEE_KEY = "gatekeeperio_remembered_employee"
 
 interface RememberedEmployee {
   id: string
   email: string
   fullName: string
   locationId: string | null
-  role: string
-  avatar_url?: string | null
+  role: "admin" | "staff" | "viewer" | "employee"
+  avatar_url: string | null
+  created_at: string
+  updated_at: string
 }
 
 interface SignInForm {
@@ -61,6 +64,7 @@ interface SignInForm {
 }
 
 export default function KioskPage() {
+  const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME || "Your Company"
   const searchParams = useSearchParams()
   const router = useRouter()
   const [mode, setMode] = useState<KioskMode>("home")
@@ -89,12 +93,15 @@ export default function KioskPage() {
   const [geoError, setGeoError] = useState<string | null>(null)
   const [isDetectingLocation, setIsDetectingLocation] = useState(true)
   const [nearestLocation, setNearestLocation] = useState<{ location: Location; distance: number } | null>(null)
+  const [selectedLocationDistance, setSelectedLocationDistance] = useState<number | null>(null)
+  const [userLocationName, setUserLocationName] = useState<string | null>(null)
 
   // Employee login state
   const [employeeEmail, setEmployeeEmail] = useState("")
   const [employeePassword, setEmployeePassword] = useState("")
   const [rememberedEmployee, setRememberedEmployee] = useState<RememberedEmployee | null>(null)
   const [currentEmployee, setCurrentEmployee] = useState<Profile | null>(null)
+  const [employeeSignInRecord, setEmployeeSignInRecord] = useState<{ sign_in_time: string; location_name?: string; timezone?: string } | null>(null)
   const [employeeSignedIn, setEmployeeSignedIn] = useState(false)
   const [rememberMe, setRememberMe] = useState(true)
 
@@ -111,6 +118,9 @@ export default function KioskPage() {
   // Settings state
   const [hostNotificationsEnabled, setHostNotificationsEnabled] = useState(true)
   const [badgePrintingEnabled, setBadgePrintingEnabled] = useState(false)
+
+  // Clock state for displaying local time
+  const [currentTime, setCurrentTime] = useState(new Date())
 
   // Booking lookup state
   const [bookingEmail, setBookingEmail] = useState("")
@@ -159,6 +169,16 @@ export default function KioskPage() {
           .single()
 
         if (profile) {
+          // Fetch the latest sign-in record to get time and location
+          const { data: signInRecord } = await supabase
+            .from("employee_sign_ins")
+            .select("sign_in_time, location:locations(name, timezone)")
+            .eq("profile_id", profile.id)
+            .is("sign_out_time", null)
+            .order("sign_in_time", { ascending: false })
+            .limit(1)
+            .single()
+
           setCurrentEmployee({
             id: profile.id,
             full_name: profile.full_name,
@@ -169,6 +189,16 @@ export default function KioskPage() {
             created_at: profile.created_at,
             updated_at: profile.updated_at,
           })
+
+          if (signInRecord) {
+            const locations = Array.isArray(signInRecord.location) ? signInRecord.location : [signInRecord.location]
+            const loc = locations?.[0] as { name: string; timezone: string } | null | undefined
+            setEmployeeSignInRecord({
+              sign_in_time: signInRecord.sign_in_time,
+              location_name: loc?.name,
+              timezone: loc?.timezone,
+            })
+          }
           setEmployeeSignedIn(true)
           setMode("employee-dashboard")
 
@@ -298,6 +328,39 @@ export default function KioskPage() {
     )
   }, [])
 
+  // Reverse geocode user coordinates to get location name
+  useEffect(() => {
+    if (!userCoords) return
+
+    async function reverseGeocode() {
+      try {
+        // Using OpenStreetMap's Nominatim API for reverse geocoding (free, no API key needed)
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userCoords?.lat}&lon=${userCoords?.lng}&zoom=10`,
+          { headers: { "User-Agent": "Gatekeeper.ioSignIn/1.0" } }
+        )
+
+        if (response.ok) {
+          const data = await response.json()
+          // Get city/town/village name, falling back to county or state
+          const locationName =
+            data.address?.city ||
+            data.address?.town ||
+            data.address?.village ||
+            data.address?.county ||
+            data.address?.state ||
+            null
+          setUserLocationName(locationName)
+        }
+      } catch (err) {
+        console.log("[v0] Reverse geocoding error:", err)
+        // Non-critical, just won't show the location name
+      }
+    }
+
+    reverseGeocode()
+  }, [userCoords])
+
   // Auto-select nearest location when coordinates and locations are available
   useEffect(() => {
     if (userCoords && locations.length > 0) {
@@ -308,6 +371,39 @@ export default function KioskPage() {
       }
     }
   }, [userCoords, locations, findNearestLocation])
+
+  // Calculate distance to selected location when it changes
+  useEffect(() => {
+    if (userCoords && selectedLocation) {
+      const selectedLoc = locations.find(l => l.id === selectedLocation)
+      if (selectedLoc?.latitude && selectedLoc?.longitude) {
+        const distance = calculateDistance(
+          userCoords.lat,
+          userCoords.lng,
+          selectedLoc.latitude,
+          selectedLoc.longitude
+        )
+        setSelectedLocationDistance(distance)
+      } else {
+        setSelectedLocationDistance(null)
+      }
+    } else {
+      setSelectedLocationDistance(null)
+    }
+  }, [userCoords, selectedLocation, locations, calculateDistance])
+
+  // Get the current selected location object
+  const currentLocation = locations.find(l => l.id === selectedLocation)
+  const isSelectedDifferentFromNearest = nearestLocation && selectedLocation !== nearestLocation.location.id
+  const currentTimezone = currentLocation?.timezone || "UTC"
+
+  // Update clock every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   // Check for remembered employee and auto-login
   useEffect(() => {
@@ -325,6 +421,13 @@ export default function KioskPage() {
       }
     }
   }, [nearestLocation])
+
+  // Pre-fill employee email when entering employee-login mode with a remembered employee
+  useEffect(() => {
+    if (mode === "employee-login" && rememberedEmployee?.email) {
+      setEmployeeEmail(rememberedEmployee.email)
+    }
+  }, [mode, rememberedEmployee])
 
   async function autoSignInEmployee(employee: RememberedEmployee) {
     if (!selectedLocation) {
@@ -346,6 +449,11 @@ export default function KioskPage() {
         .is("sign_out_time", null)
         .single()
 
+      const currentLoc = locations.find(l => l.id === selectedLocation)
+      const locationName = currentLoc?.name
+      const locationTimezone = currentLoc?.timezone
+      let signInTime = new Date().toISOString()
+
       if (!existingSignIn) {
         // Auto sign in - use selectedLocation instead of nearestLocation
         const { error: insertError } = await supabase.from("employee_sign_ins").insert({
@@ -359,18 +467,21 @@ export default function KioskPage() {
           console.log("[v0] Employee sign-in insert error:", insertError)
           throw insertError
         }
+      } else {
+        signInTime = existingSignIn.sign_in_time
       }
 
       setCurrentEmployee({
         id: employee.id,
         email: employee.email,
         full_name: employee.fullName,
-        role: employee.role as "admin" | "staff" | "viewer" | "employee",
+        role: employee.role,
         location_id: employee.locationId,
-        avatar_url: employee.avatar_url ?? null,
+        avatar_url: employee.avatar_url,
         created_at: "",
         updated_at: "",
       })
+      setEmployeeSignInRecord({ sign_in_time: signInTime, location_name: locationName, timezone: locationTimezone })
       setEmployeeSignedIn(true)
       setMode("employee-dashboard")
     } catch (err) {
@@ -401,12 +512,20 @@ export default function KioskPage() {
           // Check if they have an active sign-in
           const { data: activeSignIn } = await supabase
             .from("employee_sign_ins")
-            .select("*")
+            .select("*, location:locations(name, timezone)")
             .eq("profile_id", profile.id)
             .is("sign_out_time", null)
+            .order("sign_in_time", { ascending: false })
+            .limit(1)
             .single()
 
           if (activeSignIn) {
+            const loc = activeSignIn.location as { name: string; timezone: string } | null
+            setEmployeeSignInRecord({
+              sign_in_time: activeSignIn.sign_in_time,
+              location_name: loc?.name,
+              timezone: loc?.timezone,
+            })
             setEmployeeSignedIn(true)
             setMode("employee-dashboard")
           }
@@ -461,10 +580,8 @@ export default function KioskPage() {
           expected_departure,
           purpose,
           status,
-          host_id,
-          hosts!inner(id, name, email),
-          visitor_type_id,
-          visitor_types!inner(id, name, badge_color, requires_training)
+          host:hosts(id, name, email),
+          visitor_type:visitor_types(id, name, badge_color, requires_training)
         `)
         .ilike("visitor_email", bookingEmail.trim())
         .eq("status", "pending")
@@ -477,17 +594,23 @@ export default function KioskPage() {
         return
       }
 
+      // Transform the results to match expected type (convert array fields to single objects)
       const transformedBookings = bookings.map((booking: any) => ({
         ...booking,
-        host: booking.hosts?.[0] || null,
-        visitor_type: booking.visitor_types?.[0] || null,
-      }))
+        host: Array.isArray(booking.host) && booking.host.length > 0 ? booking.host[0] : null,
+        visitor_type: Array.isArray(booking.visitor_type) && booking.visitor_type.length > 0 ? booking.visitor_type[0] : null,
+      })) as typeof bookingResults
 
       setBookingResults(transformedBookings)
 
       // If only one booking, auto-select it
-      if (transformedBookings.length === 1) {
-        setSelectedBooking(transformedBookings[0])
+      if (bookings.length === 1) {
+        const transformedBooking = {
+          ...bookings[0],
+          host: Array.isArray(bookings[0].host) && bookings[0].host.length > 0 ? bookings[0].host[0] : null,
+          visitor_type: Array.isArray(bookings[0].visitor_type) && bookings[0].visitor_type.length > 0 ? bookings[0].visitor_type[0] : null,
+        } as typeof bookingResults[0]
+        setSelectedBooking(transformedBooking)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to lookup booking")
@@ -656,29 +779,85 @@ export default function KioskPage() {
     // Handle badge printing if enabled
     if (badgePrintingEnabled) {
       const printWindow = window.open("", "_blank", "width=400,height=300")
+
       if (printWindow) {
+        printWindow.document.open()
         printWindow.document.write(`
           <!DOCTYPE html>
           <html>
           <head>
             <title>Visitor Badge</title>
             <style>
-              body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-              .badge { border: 2px solid #333; padding: 20px; width: 300px; margin: 0 auto; }
-              .badge-number { font-size: 32px; font-weight: bold; color: ${selectedBooking.visitor_type?.badge_color || "#10B981"}; }
-              .visitor-name { font-size: 24px; margin: 10px 0; }
-              .company { font-size: 14px; color: #666; }
-              .date { font-size: 12px; color: #999; margin-top: 10px; }
+              body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 20px;
+              }
+
+              .badge {
+                border: 2px solid #333;
+                padding: 20px;
+                width: 300px;
+                margin: 0 auto;
+              }
+
+              .logo {
+                max-width: 180px;
+                height: auto;
+                margin-bottom: 15px;
+              }
+
+              .badge-number {
+                font-size: 32px;
+                font-weight: bold;
+                color: "#000000";
+              }
+
+              .visitor-name {
+                font-size: 24px;
+                margin: 10px 0;
+              }
+
+              .company {
+                font-size: 14px;
+                color: #666;
+              }
+
+              .date {
+                font-size: 12px;
+                color: #999;
+                margin-top: 10px;
+              }
             </style>
           </head>
           <body>
             <div class="badge">
+              <img src="${window.location.origin}/icon.png" alt="Logo" class="logo" />
+
               <div class="badge-number">${badgeNumber}</div>
-              <div class="visitor-name">${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}</div>
-              ${selectedBooking.visitor_company ? `<div class="company">${selectedBooking.visitor_company}</div>` : ""}
-              <div class="date">${new Date().toLocaleDateString()}</div>
+              <div class="visitor-name">
+                ${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}
+              </div>
+              ${selectedBooking.visitor_company
+            ? `<div class="company">${selectedBooking.visitor_company}</div>`
+            : ""
+          }
+              <div class="date">
+                ${formatDate(
+            new Date().toISOString(),
+            locations.find(l => l.id === selectedLocation)?.timezone || "UTC"
+          )}
+              </div>
             </div>
-            <script>window.print(); window.close();</script>
+
+            <script>
+              window.onload = () => {
+                setTimeout(() => {
+                  window.print()
+                  window.close()
+                }, 300)
+              }
+            </script>
           </body>
           </html>
         `)
@@ -751,7 +930,7 @@ export default function KioskPage() {
     if (videoStarted) return
     setVideoStarted(true)
 
-    // Required watching time of approximately 47 minutes and 39 seconds
+    // Simulate 47.39 minutes of required watching time
     const totalDuration = 2843.4
     let elapsed = 0
 
@@ -851,31 +1030,73 @@ export default function KioskPage() {
 
       // Trigger badge printing if enabled
       if (badgePrintingEnabled) {
-        // Open print dialog for badge
         const printWindow = window.open("", "_blank", "width=400,height=300")
+
         if (printWindow) {
+          printWindow.document.open()
           printWindow.document.write(`
             <!DOCTYPE html>
             <html>
             <head>
               <title>Visitor Badge</title>
               <style>
-                body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-                .badge { border: 2px solid #333; padding: 20px; width: 300px; margin: 0 auto; }
-                .badge-number { font-size: 32px; font-weight: bold; color: #10B981; }
-                .visitor-name { font-size: 24px; margin: 10px 0; }
-                .company { font-size: 14px; color: #666; }
-                .date { font-size: 12px; color: #999; margin-top: 10px; }
+                body {
+                  font-family: Arial, sans-serif;
+                  text-align: center;
+                  padding: 20px;
+                }
+                .badge {
+                  border: 2px solid #333;
+                  padding: 20px;
+                  width: 300px;
+                  margin: 0 auto;
+                }
+                .logo {
+                  max-width: 150px;
+                  margin-bottom: 10px;
+                }
+                .badge-number {
+                  font-size: 32px;
+                  font-weight: bold;
+                  color: #000000;
+                }
+                .visitor-name {
+                  font-size: 24px;
+                  margin: 10px 0;
+                }
+                .company {
+                  font-size: 14px;
+                  color: #666;
+                }
+                .date {
+                  font-size: 12px;
+                  color: #999;
+                  margin-top: 10px;
+                }
               </style>
             </head>
             <body>
               <div class="badge">
+                <img src="${window.location.origin}/icon.png" class="logo" />
                 <div class="badge-number">${badgeNumber}</div>
                 <div class="visitor-name">${form.firstName} ${form.lastName}</div>
                 ${form.company ? `<div class="company">${form.company}</div>` : ""}
-                <div class="date">${new Date().toLocaleDateString()}</div>
+                <div class="date">
+                  ${formatDate(
+            new Date().toISOString(),
+            locations.find(l => l.id === selectedLocation)?.timezone || "UTC"
+          )}
+                </div>
               </div>
-              <script>window.print(); window.close();</script>
+
+              <script>
+                window.onload = () => {
+                  setTimeout(() => {
+                    window.print()
+                    window.close()
+                  }, 300)
+                }
+              </script>
             </body>
             </html>
           `)
@@ -1049,6 +1270,11 @@ export default function KioskPage() {
 
       // Create employee sign-in record
       console.log("[v0] Creating employee sign-in for profile:", profile.id, "at location:", selectedLocation)
+      const signInTime = new Date().toISOString()
+      const selectedLoc = locations.find(l => l.id === selectedLocation)
+      const locationName = selectedLoc?.name
+      const locationTimezone = selectedLoc?.timezone
+
       const { error: signInError } = await supabase.from("employee_sign_ins").insert({
         profile_id: profile.id,
         location_id: selectedLocation,
@@ -1061,6 +1287,8 @@ export default function KioskPage() {
         throw signInError
       }
 
+      setEmployeeSignInRecord({ sign_in_time: signInTime, location_name: locationName, timezone: locationTimezone })
+
       // Remember employee if checkbox is checked
       if (rememberMe) {
         const rememberedData: RememberedEmployee = {
@@ -1070,11 +1298,12 @@ export default function KioskPage() {
           locationId: profile.location_id,
           role: profile.role,
           avatar_url: profile.avatar_url || null,
+          created_at: profile.created_at,
+          updated_at: profile.updated_at,
         }
         localStorage.setItem(REMEMBERED_EMPLOYEE_KEY, JSON.stringify(rememberedData))
         setRememberedEmployee(rememberedData)
       }
-
       setEmployeeSignedIn(true)
       setMode("employee-dashboard")
     } catch (err) {
@@ -1107,8 +1336,6 @@ export default function KioskPage() {
           },
         },
       })
-
-
 
       if (error) throw error
     } catch (err) {
@@ -1157,6 +1384,7 @@ export default function KioskPage() {
       })
       setCurrentEmployee(null)
       setEmployeeSignedIn(false)
+      setEmployeeSignInRecord(null)
       setEmployeeEmail("")
       setEmployeePassword("")
       setMode("success")
@@ -1180,6 +1408,7 @@ export default function KioskPage() {
     // Reset employee-related state
     setCurrentEmployee(null)
     setEmployeeSignedIn(false)
+    setEmployeeSignInRecord(null)
     setEmployeeEmail("")
     setEmployeePassword("")
   }
@@ -1192,10 +1421,24 @@ export default function KioskPage() {
         <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-between gap-2">
           <div className="shrink-0">
             <Link href="/">
-              <TalusAgLogo />
+              <Logo />
             </Link>
           </div>
           <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            {/* Clock display with location timezone */}
+            <div className="hidden md:flex items-center gap-2 text-sm border-r pr-4 mr-2">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              <span className="font-medium text-foreground">
+                {currentTime.toLocaleTimeString("en-US", {
+                  timeZone: toIANATimezone(currentTimezone),
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+              <span className="font-medium text-xs text-muted-foreground">
+                {getTimezoneAbbreviation(currentTimezone)}
+              </span>
+            </div>
             {/* Location indicator */}
             <div className="hidden sm:flex items-center gap-2 text-sm">
               {isDetectingLocation ? (
@@ -1203,24 +1446,37 @@ export default function KioskPage() {
                   <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                   <span className="text-muted-foreground">Detecting location...</span>
                 </>
+              ) : isSelectedDifferentFromNearest && currentLocation ? (
+                <>
+                  <Building2 className="w-4 h-4 text-amber-500" />
+                  <span className="text-foreground font-medium">{currentLocation.name}</span>
+                  {selectedLocationDistance !== null && (
+                    <Badge variant="outline" className="text-xs border-amber-500 text-amber-600">
+                      {formatDistance(selectedLocationDistance)}
+                    </Badge>
+                  )}
+                </>
               ) : nearestLocation ? (
                 <>
                   <MapPin className="w-4 h-4 text-primary" />
-                  <span className="text-foreground font-medium">{nearestLocation.location.name}</span>
+                  <span className="text-foreground font-medium">{locations.find((l) => l.id === selectedLocation)?.name != nearestLocation.location.name ? locations.find((l) => l.id === selectedLocation)?.name : nearestLocation.location.name}</span>
                   <Badge variant="secondary" className="text-xs">
                     {formatDistance(nearestLocation.distance)}
                   </Badge>
                 </>
+              ) : currentLocation ? (
+                <>
+                  <Building2 className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-muted-foreground">{currentLocation.name}</span>
+                </>
               ) : (
                 <>
                   <Building2 className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">
-                    {locations.find((l) => l.id === selectedLocation)?.name || "Select location"}
-                  </span>
+                  <span className="text-muted-foreground">Select location</span>
                 </>
               )}
             </div>
-            {/* Location selector if multiple locations
+
             {locations.length > 1 && (
               <Select value={selectedLocation} onValueChange={setSelectedLocation}>
                 <SelectTrigger className="w-[140px] sm:w-[180px]">
@@ -1234,7 +1490,7 @@ export default function KioskPage() {
                   ))}
                 </SelectContent>
               </Select>
-            )} */}
+            )}
           </div>
         </div>
       </header>
@@ -1244,7 +1500,7 @@ export default function KioskPage() {
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-6 sm:mb-12">
               <h1 className="text-2xl sm:text-4xl font-bold text-foreground mb-2 sm:mb-3">Visitor Check-In</h1>
-              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to Talus. Please sign in or sign out below.</p>
+              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {companyName}. Please sign in or sign out below.</p>
             </div>
 
             {/* Visitor options - always shown */}
@@ -1309,11 +1565,11 @@ export default function KioskPage() {
               {employeeSignedIn && currentEmployee ? (
                 <Card className="border-green-200 bg-green-50/50 mb-4 sm:mb-6">
                   <CardContent className="py-3 sm:py-4 px-3 sm:px-6">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 sm:gap-4">
-                        <Avatar className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center text-white font-semibold shrink-0 bg-blue-600">
+                        <Avatar className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center shrink-0">
                           <AvatarImage src={currentEmployee.avatar_url || undefined} />
-                          <AvatarFallback className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center text-white font-semibold shrink-0 bg-blue-600">
+                          <AvatarFallback className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center text-white font-semibold shrink-0 bg-blue-500">
                             {currentEmployee.full_name?.charAt(0) || currentEmployee.email.charAt(0).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
@@ -1351,7 +1607,7 @@ export default function KioskPage() {
                         </div>
                         <div>
                           <h3 className="font-semibold text-sm sm:text-base">Employee Sign In</h3>
-                          <p className="text-xs sm:text-sm text-muted-foreground">Talus employees sign in here</p>
+                          <p className="text-xs sm:text-sm text-muted-foreground">{companyName} employees sign in here</p>
                         </div>
                       </div>
                       <ArrowLeft className="w-5 h-5 text-muted-foreground rotate-180 shrink-0" />
@@ -1369,7 +1625,7 @@ export default function KioskPage() {
                         <Avatar className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center text-white font-semibold shrink-0 bg-blue-600">
                           <AvatarImage src={rememberedEmployee.avatar_url || undefined} />
                           <AvatarFallback className="w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center text-white font-semibold shrink-0 bg-blue-600">
-                            {rememberedEmployee.fullName.charAt(0) || rememberedEmployee.email.charAt(0).toUpperCase()}
+                            {rememberedEmployee.fullName?.charAt(0) || rememberedEmployee.email.charAt(0).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
@@ -1414,12 +1670,7 @@ export default function KioskPage() {
 
               <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
                 <Clock className="w-4 h-4" />
-                {new Date().toLocaleDateString("en-US", {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                })}
+                {formatDate(new Date().toISOString(), locations.find(l => l.id === selectedLocation)?.timezone || "UTC")}
               </p>
             </div>
           </div>
@@ -1645,10 +1896,7 @@ export default function KioskPage() {
                                 <div className="flex flex-wrap gap-2 mt-2">
                                   <Badge variant="secondary" className="text-xs">
                                     <Clock className="w-3 h-3 mr-1" />
-                                    {new Date(booking.expected_arrival).toLocaleTimeString([], {
-                                      hour: '2-digit',
-                                      minute: '2-digit'
-                                    })}
+                                    {formatTime(booking.expected_arrival, locations.find(l => l.id === selectedLocation)?.timezone || "UTC")}
                                   </Badge>
                                   {booking.host && (
                                     <Badge variant="outline" className="text-xs">
@@ -1775,7 +2023,7 @@ export default function KioskPage() {
                   </div>
                   <div>
                     <CardTitle className="text-xl sm:text-2xl">Employee Sign In</CardTitle>
-                    <CardDescription className="text-xs sm:text-sm">Sign in with your Talus credentials</CardDescription>
+                    <CardDescription className="text-xs sm:text-sm">Sign in with your {companyName} credentials</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -1789,7 +2037,7 @@ export default function KioskPage() {
                       required
                       value={employeeEmail}
                       onChange={(e) => setEmployeeEmail(e.target.value)}
-                      placeholder="you@talusag.com"
+                      placeholder="you@domain.com"
                     />
                   </div>
 
@@ -1804,27 +2052,42 @@ export default function KioskPage() {
                       placeholder="Enter your password"
                     />
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="rememberMe"
-                      checked={rememberMe}
-                      onCheckedChange={(checked) => setRememberMe(checked === true)}
-                    />
-                    <label htmlFor="rememberMe" className="text-sm cursor-pointer">
-                      Remember me on this device
-                    </label>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="rememberMe"
+                        checked={rememberMe}
+                        onCheckedChange={(checked) => setRememberMe(checked === true)}
+                      />
+                      <label htmlFor="rememberMe" className="text-sm cursor-pointer">
+                        Remember me on this device
+                      </label>
+                    </div>
+                    <Link href="/kiosk/forgot-password" className="text-sm text-primary hover:underline">
+                      Forgot password?
+                    </Link>
                   </div>
-
-                  {nearestLocation && (
-                    <div className="bg-muted/50 rounded-lg p-3 flex items-center gap-3">
-                      <MapPin className="w-5 h-5 text-primary" />
-                      <div>
-                        <p className="text-sm font-medium">Signing in at {nearestLocation.location.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatDistance(nearestLocation.distance, "from location")}
-                        </p>
+                  {currentLocation && (
+                    <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-3">
+                        <Building2 className="w-5 h-5 text-primary" />
+                        <div>
+                          <p className="text-sm font-medium">Signing in at {currentLocation.name}</p>
+                          {selectedLocationDistance !== null && (
+                            <p className="text-xs text-muted-foreground">
+                              {formatDistance(selectedLocationDistance, "from your location")}
+                            </p>
+                          )}
+                        </div>
                       </div>
+                      {/* {userLocationName && (
+                        <div className="flex items-center gap-3 pt-1 border-t border-border/50">
+                          <MapPin className="w-4 h-4 text-muted-foreground" />
+                          <p className="text-xs text-muted-foreground">
+                            Your current location: <span className="font-medium text-foreground">{userLocationName}</span>
+                          </p>
+                        </div>
+                      )} */}
                     </div>
                   )}
 
@@ -1876,9 +2139,9 @@ export default function KioskPage() {
           <div className="max-w-md mx-auto">
             <Card className="border-blue-200">
               <CardHeader className="text-center p-4 sm:p-6">
-                <Avatar className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center mx-auto mb-3 sm:mb-4 text-white text-xl sm:text-2xl font-bold">
+                <Avatar className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center mx-auto">
                   <AvatarImage src={currentEmployee.avatar_url || undefined} />
-                  <AvatarFallback className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-blue-600 flex items-center justify-center mx-auto mb-3 sm:mb-4 text-white text-xl sm:text-2xl font-bold">
+                  <AvatarFallback className="w-16 h-16 sm:w-20 sm:h-20 bg-blue-500 flex items-center justify-center mx-auto text-white text-xl sm:text-2xl font-semibold">
                     {currentEmployee.full_name?.charAt(0) || currentEmployee.email.charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
@@ -1903,11 +2166,9 @@ export default function KioskPage() {
                     <div>
                       <p className="text-sm text-muted-foreground">Signed in at</p>
                       <p className="font-medium">
-                        {new Date().toLocaleTimeString("en-US", {
-                          hour: "numeric",
-                          minute: "2-digit",
-                          hour12: true,
-                        })}
+                        {employeeSignInRecord?.sign_in_time
+                          ? `${formatTime(employeeSignInRecord.sign_in_time, employeeSignInRecord.timezone || "UTC")} ${getTimezoneAbbreviation(employeeSignInRecord.timezone || "UTC")}`
+                          : "—"}
                       </p>
                     </div>
                   </div>
@@ -2038,7 +2299,7 @@ export default function KioskPage() {
                       />
                       <label htmlFor="acknowledge" className="text-sm leading-relaxed cursor-pointer">
                         I confirm that I have watched and understood the safety training video. I agree to follow
-                        all safety guidelines and procedures while on Talus premises. I understand that failure
+                        all safety guidelines and procedures while on {companyName} premises. I understand that failure
                         to comply may result in being asked to leave the facility.
                       </label>
                     </div>
@@ -2096,7 +2357,7 @@ export default function KioskPage() {
                 <p className="text-xs sm:text-sm text-muted-foreground mb-4 sm:mb-6">
                   {successData.type === "in"
                     ? "Please collect your visitor badge from reception."
-                    : "Thank you for visiting Talus."}
+                    : `Thank you for visiting ${companyName}.`}
                 </p>
 
                 <Button onClick={handleReset} size="lg" className="w-full">

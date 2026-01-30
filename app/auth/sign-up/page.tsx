@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { TalusAgLogo } from "@/components/talusag-logo"
+import { Logo } from "@/components/logo"
 
 export default function SignUpPage() {
   const [email, setEmail] = useState("")
@@ -84,7 +84,7 @@ export default function SignUpPage() {
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/30 flex flex-col">
       <header className="p-4 sm:p-6">
         <Link href="/">
-          <TalusAgLogo />
+          <Logo />
         </Link>
       </header>
 

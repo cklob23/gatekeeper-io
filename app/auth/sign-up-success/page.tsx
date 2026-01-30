@@ -1,7 +1,7 @@
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { TalusAgLogo } from "@/components/talusag-logo"
+import { Logo } from "@/components/logo"
 import { Mail } from "lucide-react"
 
 export default function SignUpSuccessPage() {
@@ -9,7 +9,7 @@ export default function SignUpSuccessPage() {
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/30 flex flex-col">
       <header className="p-4 sm:p-6">
         <Link href="/">
-          <TalusAgLogo />
+          <Logo />
         </Link>
       </header>
 
