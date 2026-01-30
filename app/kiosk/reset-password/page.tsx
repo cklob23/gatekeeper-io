@@ -12,7 +12,7 @@ import { ArrowLeft, Lock, CheckCircle, AlertCircle, Eye, EyeOff } from "lucide-r
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { TalusAgLogo } from "@/components/talusag-logo"
+import { Logo } from "@/components/logo"
 
 export default function ResetPasswordPage() {
     const router = useRouter()
@@ -109,8 +109,8 @@ export default function ResetPasswordPage() {
                 <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                     <div className="container flex h-14 items-center px-4">
                         <Link href="/kiosk" className="flex items-center gap-2">
-                            <Image src="/talus-t-logo.png" alt="Talus" width={32} height={32} className="rounded" />
-                            <span className="font-semibold">Talus Sign In</span>
+                            <Image src="/icon.png" alt="Logo" width={32} height={32} className="rounded" />
+                            <span className="font-semibold">Gatekeeper.io</span>
                         </Link>
                     </div>
                 </header>
@@ -128,8 +128,8 @@ export default function ResetPasswordPage() {
                 <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                     <div className="container flex h-14 items-center px-4">
                         <Link href="/kiosk" className="flex items-center gap-2">
-                            <Image src="/talus-t-logo.png" alt="Talus" width={32} height={32} className="rounded" />
-                            <span className="font-semibold">Talus Sign In</span>
+                            <Image src="/icon.png" alt="Logo" width={32} height={32} className="rounded" />
+                            <span className="font-semibold">Gatekeeper.io</span>
                         </Link>
                     </div>
                 </header>
@@ -169,7 +169,7 @@ export default function ResetPasswordPage() {
             <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                 <div className="container flex h-14 items-center px-4">
                     <Link href="/kiosk" className="flex items-center gap-2">
-                        <TalusAgLogo />
+                        <Logo />
                     </Link>
                 </div>
             </header>

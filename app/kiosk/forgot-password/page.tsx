@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label"
 import { ArrowLeft, Mail, CheckCircle, AlertCircle } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
-import { TalusAgLogo } from "@/components/talusag-logo"
+import { Logo } from "@/components/logo"
 
 export default function ForgotPasswordPage() {
     const [email, setEmail] = useState("")
@@ -52,7 +52,7 @@ export default function ForgotPasswordPage() {
             <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                 <div className="container flex h-14 items-center px-4">
                     <Link href="/kiosk" className="flex items-center gap-2">
-                        <TalusAgLogo />
+                        <Logo />
                     </Link>
                 </div>
             </header>
