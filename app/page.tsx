@@ -11,7 +11,7 @@ export default function HomePage() {
       <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/">
-            <Logo />
+            <Logo height={100} width={150} />
           </Link>
           <nav className="flex items-center gap-4">
             <Link href="/auth/login">
