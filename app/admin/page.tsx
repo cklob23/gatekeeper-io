@@ -4,10 +4,11 @@ import { Users, UserCheck, Clock, AlertTriangle, Briefcase } from "lucide-react"
 import { DashboardCharts } from "@/components/admin/dashboard-charts"
 import { RecentVisitors } from "@/components/admin/recent-visitors"
 import { DashboardMap } from "@/components/admin/dashboard-map"
+import { getBrandingSettings } from "@/lib/branding"
 
 export default async function AdminDashboardPage() {
-  const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME || "Your Company's"
   const supabase = await createClient()
+  const branding = await getBrandingSettings()
 
   // Get current visitors (signed in but not signed out)
   const { count: currentVisitors } = await supabase
@@ -65,7 +66,7 @@ export default async function AdminDashboardPage() {
     <div className="space-y-4 sm:space-y-6">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold">Dashboard</h1>
-        <p className="text-sm sm:text-base text-muted-foreground">Overview of visitor activity at {companyName} facilities</p>
+        <p className="text-sm sm:text-base text-muted-foreground">Overview of visitor activity at {branding.companyName} facilities</p>
       </div>
 
       {/* Location Map */}

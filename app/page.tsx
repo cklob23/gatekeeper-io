@@ -1,18 +1,20 @@
+"use client"
+
 import Link from "next/link"
 import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { UserCheck, Shield, ClipboardList } from "lucide-react"
+import { useBranding } from "@/hooks/use-branding"
 
 export default function HomePage() {
-  const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME || "Your Company"
+  const { branding, isLoading } = useBranding()
+  console.log(branding)
   return (
     <div className="min-h-screen bg-gradient-to-b from-secondary/50 to-background">
       <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/">
-            <Logo height={100} width={150} />
-          </Link>
+          <Logo />
           <nav className="flex items-center gap-4">
             <Link href="/auth/login">
               <Button variant="ghost">Admin Login</Button>
@@ -26,9 +28,11 @@ export default function HomePage() {
 
       <main className="container mx-auto px-4 py-16">
         <div className="text-center mb-16">
-          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4 text-balance">Welcome to {companyName}</h1>
+          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-4 text-balance">
+            {isLoading ? "Welcome to Gatekeeper.io" : `Welcome to ${branding.companyName || "Gatekeeper.io"}`}
+          </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto text-pretty">
-            Secure visitor management for organizations that value accountability, stewardship, and compliance. Sign in quickly and safely.
+            Secure visitor and access management platform. Sign in quickly and safely.
           </p>
         </div>
 
@@ -54,7 +58,7 @@ export default function HomePage() {
                 <ClipboardList className="w-6 h-6 text-primary" />
               </div>
               <CardTitle>Pre-Registration</CardTitle>
-              <CardDescription>Have an appointment? Check in with your booking code</CardDescription>
+              <CardDescription>Already registered? Check in with your booking code</CardDescription>
             </CardHeader>
             <CardContent>
               <Link href="/kiosk?mode=booking">
@@ -71,7 +75,7 @@ export default function HomePage() {
                 <Shield className="w-6 h-6 text-primary" />
               </div>
               <CardTitle>Administration</CardTitle>
-              <CardDescription>Admin access to visitor reports and management</CardDescription>
+              <CardDescription>Staff access to visitor reports and management</CardDescription>
             </CardHeader>
             <CardContent>
               <Link href="/auth/login">
@@ -92,7 +96,7 @@ export default function HomePage() {
 
       <footer className="border-t py-8 mt-auto">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>&copy; {new Date().getFullYear()} {companyName}. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} {branding.companyName || "Gatekeeper.io"} Visitor Management. All rights reserved.</p>
         </div>
       </footer>
     </div>
