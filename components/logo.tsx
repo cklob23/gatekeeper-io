@@ -8,9 +8,10 @@ interface LogoProps {
   className?: string
   width?: number
   height?: number
+  borderRadius?: string
 }
 
-export function Logo({ variant = "dark", className = "", height = 40 }: LogoProps) {
+export function Logo({ variant = "dark", className = "", height = 40, borderRadius = "sm" }: LogoProps) {
   const { branding, isLoading } = useBranding()
 
   // If custom logo is set, use it
@@ -22,7 +23,7 @@ export function Logo({ variant = "dark", className = "", height = 40 }: LogoProp
           alt={branding.companyName}
           width={40}
           height={height}
-          className="h-10 w-auto object-contain"
+          className={`h-10 w-auto object-contain rounded-${borderRadius}`}
           priority
         />
       </div>
@@ -37,7 +38,7 @@ export function Logo({ variant = "dark", className = "", height = 40 }: LogoProp
         alt={branding?.companyName || "Gatekeeperio Logo"}
         width={40}
         height={height}
-        className="h-10 w-auto object-contain"
+        className={`h-10 w-auto object-contain rounded-${borderRadius}`}
         priority
       />
     </div>
@@ -45,7 +46,7 @@ export function Logo({ variant = "dark", className = "", height = 40 }: LogoProp
 }
 
 // Icon-only version for collapsed sidebar
-export function LogoIcon({ className = "" }: { className?: string }) {
+export function LogoIcon({ className = "", borderRadius = "sm" }: { className?: string, borderRadius?: string }) {
   const { branding } = useBranding()
 
   // If custom small logo is set, use it
@@ -56,7 +57,7 @@ export function LogoIcon({ className = "" }: { className?: string }) {
         alt={branding.companyName}
         width={40}
         height={40}
-        className={`object-contain ${className}`}
+        className={`object-contain ${className} rounded-${borderRadius}`}
         priority
       />
     )
@@ -70,7 +71,7 @@ export function LogoIcon({ className = "" }: { className?: string }) {
         alt={branding.companyName}
         width={40}
         height={40}
-        className={`object-contain ${className}`}
+        className={`object-contain ${className} rounded-${borderRadius}`}
         priority
       />
     )
@@ -83,7 +84,7 @@ export function LogoIcon({ className = "" }: { className?: string }) {
       alt={branding?.companyName || "Gatekeeperio Logo"}
       width={40}
       height={40}
-      className={`object-contain ${className}`}
+      className={`object-contain ${className} rounded-${borderRadius}`}
       priority
     />
   )
