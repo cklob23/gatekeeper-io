@@ -9,8 +9,8 @@ const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Talus Visitor Management",
-  description: "Secure visitor sign-in and management system for Talus facilities",
+  title: "Gatekeeper.io Visitor Management",
+  description: "Secure visitor sign-in and management system",
   generator: "Developed by Caleb Klobe",
   icons: {
     icon: [
@@ -23,8 +23,8 @@ export const metadata: Metadata = {
         media: "(prefers-color-scheme: dark)",
       },
       {
-        url: "/icon.svg",
-        type: "image/svg+xml",
+        url: "/icon.png",
+        type: "image/png",
       },
     ],
     apple: "/apple-icon.png",
