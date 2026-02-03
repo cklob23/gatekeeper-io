@@ -12,6 +12,8 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Logo } from "@/components/logo"
 import { useBranding } from "@/hooks/use-branding"
+import { logAudit } from "@/lib/audit-log"
+import { loadPasswordPolicy, isPasswordExpired, needsReauthentication } from "@/lib/password-policy"
 
 export default function LoginPage() {
   const { branding } = useBranding()
@@ -28,11 +30,46 @@ export default function LoginPage() {
     setError(null)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
       if (error) throw error
+      
+      // Get user profile to check password policy
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("last_password_change, last_auth_time")
+        .eq("id", data.user.id)
+        .single()
+      
+      // Load and enforce password policy
+      const policy = await loadPasswordPolicy()
+      
+      // Check password expiration
+      if (profile && isPasswordExpired(profile.last_password_change, policy)) {
+        // Sign out the user since their password is expired
+        await supabase.auth.signOut()
+        throw new Error("Your password has expired. Please contact an administrator to reset it.")
+      }
+      
+      // Update last auth time if re-authentication is enabled
+      if (profile && needsReauthentication(profile.last_auth_time, policy)) {
+        await supabase
+          .from("profiles")
+          .update({ last_auth_time: new Date().toISOString() })
+          .eq("id", data.user.id)
+      }
+      
+      // Log successful login
+      await logAudit({
+        action: "user.login",
+        entityType: "user",
+        entityId: data.user?.id,
+        description: `User logged in: ${email}`,
+        metadata: { method: "password" }
+      })
+      
       router.push("/admin")
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
@@ -50,10 +87,10 @@ export default function LoginPage() {
       // First, sign out any existing session to ensure clean OAuth flow
       // This prevents stale refresh token issues
       await supabase.auth.signOut()
-
+      
       // Construct redirect URL - must match what's configured in Supabase Auth settings
       const callbackUrl = `${window.location.origin}/auth/callback?type=admin&next=/admin`
-
+      
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "azure",
         options: {
@@ -64,7 +101,7 @@ export default function LoginPage() {
           },
         },
       })
-
+      
       if (error) throw error
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
@@ -115,7 +152,7 @@ export default function LoginPage() {
                   <Button type="submit" className="w-full" disabled={isLoading}>
                     {isLoading ? "Signing in..." : "Sign In"}
                   </Button>
-
+                  
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center">
                       <span className="w-full border-t" />
@@ -133,10 +170,10 @@ export default function LoginPage() {
                     disabled={isLoading}
                   >
                     <svg className="mr-2 h-4 w-4" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
-                      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
-                      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
-                      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                      <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+                      <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+                      <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+                      <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
                     </svg>
                     Sign in with Microsoft
                   </Button>

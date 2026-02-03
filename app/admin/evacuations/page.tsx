@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { Evacuation, SignIn, EmployeeSignIn, Profile, Location } from "@/types/database"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { formatDateTime, formatFullDateTime } from "@/lib/timezone"
+import { logAudit } from "@/lib/audit-log"
 
 interface EmployeeSignInWithJoins extends Omit<EmployeeSignIn, 'profile' | 'location'> {
   profile: Profile | null
@@ -163,10 +164,24 @@ export default function EvacuationsPage() {
     
     const supabase = createClient()
 
-    await supabase.from("evacuations").insert({
+    const { data: newEvac } = await supabase.from("evacuations").insert({
       location_id: selectedLocationId,
       reason: reason || null,
       initiated_by: currentUserId,
+    }).select().single()
+
+    // Log evacuation start
+    await logAudit({
+      action: "evacuation.started",
+      entityType: "evacuation",
+      entityId: newEvac?.id,
+      description: `Evacuation started at ${selectedLocation?.name || "Unknown location"}`,
+      metadata: { 
+        location_id: selectedLocationId, 
+        reason: reason || null,
+        visitors_count: locationVisitors.length,
+        employees_count: locationEmployees.length
+      }
     })
 
     // Export CSV automatically when evacuation starts
@@ -180,6 +195,8 @@ export default function EvacuationsPage() {
   async function handleEndEvacuation() {
     if (!activeEvacuation) return
     const supabase = createClient()
+    const evacLocation = (activeEvacuation as Evacuation & { location?: Location }).location
+    
     await supabase
       .from("evacuations")
       .update({
@@ -188,6 +205,19 @@ export default function EvacuationsPage() {
         completed_by: currentUserId,
       })
       .eq("id", activeEvacuation.id)
+    
+    // Log evacuation end
+    await logAudit({
+      action: "evacuation.ended",
+      entityType: "evacuation",
+      entityId: activeEvacuation.id,
+      description: `Evacuation ended at ${evacLocation?.name || "Unknown location"} - All Clear`,
+      metadata: { 
+        location_id: activeEvacuation.location_id,
+        duration_ms: new Date().getTime() - new Date(activeEvacuation.started_at).getTime()
+      }
+    })
+    
     loadData()
   }
 

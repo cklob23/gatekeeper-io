@@ -37,12 +37,14 @@ import type { VisitorType, Host, Location, Profile } from "@/types/database"
 import Link from "next/link"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { formatTime, formatDate, formatDateTime, getTimezoneAbbreviation, toIANATimezone } from "@/lib/timezone"
+import { logAudit } from "@/lib/audit-log"
+import { loadPasswordPolicy, isPasswordExpired, needsReauthentication, getDaysUntilExpiration } from "@/lib/password-policy"
 import { useBranding } from "@/hooks/use-branding"
 
 type KioskMode = "home" | "sign-in" | "booking" | "training" | "sign-out" | "employee-login" | "employee-dashboard" | "success" | "photo"
 
 // Storage key for remembered employee
-const REMEMBERED_EMPLOYEE_KEY = "gatekeeperio_remembered_employee"
+const REMEMBERED_EMPLOYEE_KEY = "remembered_employee"
 
 interface RememberedEmployee {
   id: string
@@ -67,9 +69,9 @@ interface SignInForm {
 }
 
 export default function KioskPage() {
-  const { branding } = useBranding()
   const searchParams = useSearchParams()
   const router = useRouter()
+  const { branding } = useBranding()
   const [mode, setMode] = useState<KioskMode>("home")
   const [visitorTypes, setVisitorTypes] = useState<VisitorType[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
@@ -199,6 +201,10 @@ export default function KioskPage() {
             location_id: profile.location_id,
             role: profile.role,
             avatar_url: profile.avatar_url,
+            last_password_change: profile.last_password_change,
+            last_auth_time: profile.last_auth_time,
+            failed_login_attempts: profile.failed_login_attempts,
+            account_locked_until: profile.account_locked_until,
             created_at: profile.created_at,
             updated_at: profile.updated_at,
           })
@@ -350,7 +356,7 @@ export default function KioskPage() {
         // Using OpenStreetMap's Nominatim API for reverse geocoding (free, no API key needed)
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userCoords?.lat}&lon=${userCoords?.lng}&zoom=10`,
-          { headers: { "User-Agent": "Gatekeeper.io/1.0" } }
+          { headers: { "User-Agent": "Gatekeeperio/1.0" } }
         )
 
         if (response.ok) {
@@ -493,6 +499,10 @@ export default function KioskPage() {
         role: employee.role,
         location_id: employee.locationId,
         avatar_url: employee.avatar_url,
+        last_password_change: null,
+        last_auth_time: null,
+        failed_login_attempts: 0,
+        account_locked_until: null,
         created_at: "",
         updated_at: "",
       })
@@ -936,147 +946,147 @@ export default function KioskPage() {
         printWindow.document.write(`
           <!DOCTYPE html>
           <html>
-            <head>
-              <title>Visitor Badge</title>
-              <style>
-                body {
-                  font-family: Arial, sans-serif;
-                  text-align: center;
-                  padding: 20px;
-                }
+          <head>
+<title>Visitor Badge</title>
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 20px;
+              }
 
-                .badge {
-                  width: 3.375in;
-                  height: 2.125in;
-                  background: #fff;
-                  border-radius: 8px;
-                  border: 1px dashed #d1d5db;
-                  display: flex;
-                  padding: 12px;
-                  margin: 0 auto;
-                  position: relative;
-                  box-sizing: border-box;
-                }
+.badge {
+                width: 3.375in;
+                height: 2.125in;
+                background: #fff;
+                border-radius: 8px;
+                border: 1px dashed #d1d5db;
+                display: flex;
+                padding: 12px;
+                margin: 0 auto;
+                position: relative;
+                box-sizing: border-box;
+              }
 
-                .lanyard-slot {
-                  position: absolute;
-                  top: 6px;
-                  left: 50%;
-                  transform: translateX(-50%);
-                  width: 30px;
-                  height: 8px;
-                  background: #e5e7eb;
-                  border-radius: 4px;
-                }
+              .lanyard-slot {
+                position: absolute;
+                top: 6px;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 30px;
+                height: 8px;
+                background: #e5e7eb;
+                border-radius: 4px;
+              }
 
-                .photo-section {
-                  width: 40%;
-                  display: flex;
-                  align-items: center;
-                  justify-content: center;
-                  padding-right: 12px;
-                }
+              .photo-section {
+                width: 40%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding-right: 12px;
+              }
 
-                .visitor-photo {
-                  width: 100%;
-                  aspect-ratio: 1;
-                  object-fit: cover;
-                  border: 4px solid #9ca3af;
-                  background: #e5e7eb;
-                }
+              .visitor-photo {
+                width: 100%;
+                aspect-ratio: 1;
+                object-fit: cover;
+                border: 4px solid #9ca3af;
+                background: #e5e7eb;
+              }
 
-                .photo-placeholder {
-                  width: 100%;
-                  aspect-ratio: 1;
-                  background: #e5e7eb;
-                  border: 4px solid #9ca3af;
-                  display: flex;
-                  align-items: center;
-                  justify-content: center;
-                  color: #9ca3af;
-                  font-size: 36px;
-                }
+              .photo-placeholder {
+                width: 100%;
+                aspect-ratio: 1;
+                background: #e5e7eb;
+                border: 4px solid #9ca3af;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #9ca3af;
+                font-size: 36px;
+              }
 
-                .info-section {
-                  width: 60%;
-                  display: flex;
-                  flex-direction: column;
-                  justify-content: center;
-                  padding-left: 8px;
-                }
+              .info-section {
+                width: 60%;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                padding-left: 8px;
+              }
 
-                .logo {
-                  max-width: 100px;
-                  height: auto;
-                  margin-bottom: 8px;
-                  align-self: flex-end;
-                }
+              .logo {
+                max-width: 100px;
+                height: auto;
+                margin-bottom: 8px;
+                align-self: flex-end;
+              }
 
-                .visitor-name {
-                  font-size: 20px;
-                  font-weight: bold;
-                  color: #111;
-                  margin: 4px 0;
-                  line-height: 1.2;
-                }
+              .visitor-name {
+                font-size: 20px;
+                font-weight: bold;
+                color: #111;
+                margin: 4px 0;
+                line-height: 1.2;
+              }
 
-                .visitor-type {
-                  font-size: 12px;
-                  font-weight: 600;
-                  color: #374151;
-                  text-transform: uppercase;
-                  letter-spacing: 0.5px;
-                  margin: 2px 0;
-                }
+              .visitor-type {
+                font-size: 12px;
+                font-weight: 600;
+                color: #374151;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin: 2px 0;
+              }
 
-                .location {
-                  font-size: 11px;
-                  font-weight: 500;
-                  color: #6b7280;
-                  text-transform: uppercase;
-                  letter-spacing: 0.3px;
-                  margin: 2px 0;
-                }
+              .location {
+                font-size: 11px;
+                font-weight: 500;
+                color: #6b7280;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+                margin: 2px 0;
+              }
 
-                .badge-number {
-                  font-size: 10px;
-                  color: #9ca3af;
-                  margin-top: 6px;
-                }
+              .badge-number {
+                font-size: 10px;
+                color: #9ca3af;
+                margin-top: 6px;
+              }
 
-                @media print {
-                  body { margin: 0; padding: 0; }
-                  .badge { border: 1px dashed #d1d5db; }
-                }
-              </style>
-            </head>
-            <body>
-              <div class="badge">
-                <div class="lanyard-slot"></div>
-                <div class="photo-section">
-                  ${photoUrl || capturedPhoto
+              @media print {
+                body { margin: 0; padding: 0; }
+                .badge { border: 1px dashed #d1d5db; }
+              }
+            </style>
+          </head>
+          <body>
+            <div class="badge">
+              <div class="lanyard-slot"></div>
+<div class="photo-section">
+                ${photoUrl || capturedPhoto
             ? `<img src="${photoUrl || capturedPhoto}" class="visitor-photo" crossorigin="anonymous" />`
             : `<div class="photo-placeholder">${selectedBooking.visitor_first_name?.[0] || ""}${selectedBooking.visitor_last_name?.[0] || ""}</div>`
           }
-                </div>
-                <div class="info-section">
-                  <img src="${window.location.origin}/${branding.companyLogo || "icon.png"} alt="Logo" class="logo" />
-                  <div class="visitor-name">${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}</div>
-                  <div class="visitor-type">${selectedBooking.visitor_company || "Visitor"}</div>
-                  <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
-                  <div class="badge-number">${badgeNumber}</div>
-                </div>
               </div>
+              <div class="info-section">
+                <img src="${window.location.origin}/${branding.companyLogo || "icon.png"}" alt="Logo" class="logo" />
+                <div class="visitor-name">${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}</div>
+                <div class="visitor-type">${selectedBooking.visitor_company || "Visitor"}</div>
+                <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
+                <div class="badge-number">${badgeNumber}</div>
+              </div>
+            </div>
 
-              <script>
-                window.onload = () => {
-                  setTimeout(() => {
-                    window.print()
-                    window.close()
-                  }, 300)
-                }
-              </script>
-            </body>
+            <script>
+              window.onload = () => {
+                setTimeout(() => {
+                  window.print()
+                  window.close()
+                }, 300)
+              }
+            </script>
+          </body>
           </html>
         `)
         printWindow.document.close()
@@ -1196,8 +1206,8 @@ export default function KioskPage() {
     if (videoStarted) return
     setVideoStarted(true)
 
-    // Simulate 7.33 minutes of required watching time
-    const totalDuration = 60 * 3.46
+    // Simulate 47.39 minutes of required watching time
+    const totalDuration = 2843.4
     let elapsed = 0
 
     videoTimerRef.current = setInterval(() => {
@@ -1290,16 +1300,32 @@ export default function KioskPage() {
       const badgeNumber = `V${String(Date.now()).slice(-6)}`
 
       // Create sign-in record
-      const { error: signInError } = await supabase.from("sign_ins").insert({
+      const { data: signInRecord, error: signInError } = await supabase.from("sign_ins").insert({
         visitor_id: visitor.id,
         location_id: selectedLocation,
         visitor_type_id: form.visitorTypeId || null,
         host_id: form.hostId || null,
         purpose: form.purpose || null,
         badge_number: badgeNumber,
-      })
+      }).select().single()
 
       if (signInError) throw signInError
+
+      // Log visitor sign-in
+      await logAudit({
+        action: "visitor.sign_in",
+        entityType: "visitor",
+        entityId: visitor.id,
+        description: `Visitor signed in: ${form.firstName} ${form.lastName} (${form.email || "no email"})`,
+        metadata: {
+          visitor_id: visitor.id,
+          sign_in_id: signInRecord?.id,
+          location_id: selectedLocation,
+          badge_number: badgeNumber,
+          company: form.company,
+          host_id: form.hostId
+        }
+      })
 
       // Send host notification email if enabled and host is selected
       if (hostNotificationsEnabled && form.hostId) {
@@ -1487,7 +1513,7 @@ export default function KioskPage() {
             }
                 </div>
                 <div class="info-section">
-                  <img src="${window.location.origin}/icon.png" alt="Logo" class="logo" />
+                  <img src="${window.location.origin}/${branding.companyLogo || "icon.png"}" alt="Logo" class="logo" />
                   <div class="visitor-name">${form.firstName} ${form.lastName}</div>
                   <div class="visitor-type">${form.company || selectedType?.name || "Visitor"}</div>
                   <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
@@ -1697,6 +1723,19 @@ export default function KioskPage() {
 
       if (updateError) throw updateError
 
+      // Log visitor sign-out
+      await logAudit({
+        action: "visitor.sign_out",
+        entityType: "visitor",
+        entityId: signIn.visitor_id,
+        description: `Visitor signed out: ${signIn.visitor?.first_name} ${signIn.visitor?.last_name}`,
+        metadata: {
+          sign_in_id: signIn.id,
+          visitor_id: signIn.visitor_id,
+          badge_number: signIn.badge_number
+        }
+      })
+
       // Update any checked_in bookings for this visitor to completed
       await supabase
         .from("bookings")
@@ -1779,6 +1818,30 @@ export default function KioskPage() {
         throw new Error("You do not have permission to sign in as an employee")
       }
 
+      // Load and enforce password policy
+      const policy = await loadPasswordPolicy()
+
+      // Check password expiration
+      if (isPasswordExpired(profile.last_password_change, policy)) {
+        throw new Error("Your password has expired. Please contact an administrator to reset it.")
+      }
+
+      // Check if re-authentication is required
+      if (needsReauthentication(profile.last_auth_time, policy)) {
+        // Update last auth time since they just authenticated
+        await supabase
+          .from("profiles")
+          .update({ last_auth_time: new Date().toISOString() })
+          .eq("id", profile.id)
+      }
+
+      // Warn if password is expiring soon (within 7 days)
+      const daysUntilExpiration = getDaysUntilExpiration(profile.last_password_change, policy)
+      if (daysUntilExpiration !== null && daysUntilExpiration <= 7 && daysUntilExpiration > 0) {
+        // We could show a warning here, but for now just log it
+        console.log(`[v0] Password expires in ${daysUntilExpiration} days for user ${profile.email}`)
+      }
+
       setCurrentEmployee(profile)
 
       // Create employee sign-in record
@@ -1788,17 +1851,31 @@ export default function KioskPage() {
       const locationName = selectedLoc?.name
       const locationTimezone = selectedLoc?.timezone
 
-      const { error: signInError } = await supabase.from("employee_sign_ins").insert({
+      const { data: empSignInRecord, error: signInError } = await supabase.from("employee_sign_ins").insert({
         profile_id: profile.id,
         location_id: selectedLocation,
         auto_signed_in: false,
         device_id: navigator.userAgent,
-      })
+      }).select().single()
 
       if (signInError) {
         console.log("[v0] Employee sign-in insert error:", signInError)
         throw signInError
       }
+
+      // Log employee sign-in
+      await logAudit({
+        action: "employee.sign_in",
+        entityType: "employee",
+        entityId: profile.id,
+        description: `Employee signed in: ${profile.full_name || profile.email}`,
+        metadata: {
+          profile_id: profile.id,
+          sign_in_id: empSignInRecord?.id,
+          location_id: selectedLocation,
+          method: "password"
+        }
+      })
 
       setEmployeeSignInRecord({ sign_in_time: signInTime, location_name: locationName, timezone: locationTimezone })
 
@@ -1820,7 +1897,6 @@ export default function KioskPage() {
       setEmployeeSignedIn(true)
       setMode("employee-dashboard")
     } catch (err) {
-      console.log("Employee sign-in error:", err)
       setError(err instanceof Error ? err.message : "Failed to sign in")
     } finally {
       setIsLoading(false)
@@ -1880,6 +1956,19 @@ export default function KioskPage() {
           .from("employee_sign_ins")
           .update({ sign_out_time: new Date().toISOString() })
           .eq("id", signIn.id)
+
+        // Log employee sign-out
+        await logAudit({
+          action: "employee.sign_out",
+          entityType: "employee",
+          entityId: currentEmployee.id,
+          description: `Employee signed out: ${currentEmployee.full_name || currentEmployee.email}`,
+          metadata: {
+            profile_id: currentEmployee.id,
+            sign_in_id: signIn.id,
+            location_id: signIn.location_id
+          }
+        })
       }
 
       // Sign out of Supabase Auth with global scope to clear all sessions
@@ -2077,7 +2166,7 @@ export default function KioskPage() {
             <div className="mt-4 sm:mt-8">
               {/* Employee Login/Sign Out Card - Show different state based on sign-in status */}
               {employeeSignedIn && currentEmployee ? (
-                <Card className="border-blue-200 bg-blue-50/50 mb-4 sm:mb-6">
+                <Card className="border-green-200 bg-green-50/50 mb-4 sm:mb-6">
                   <CardContent className="py-3 sm:py-4 px-3 sm:px-6">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 sm:gap-4">
@@ -2089,7 +2178,7 @@ export default function KioskPage() {
                         </Avatar>
                         <div className="min-w-0">
                           <h3 className="font-semibold text-sm sm:text-base truncate">{currentEmployee.full_name || currentEmployee.email}</h3>
-                          <p className="text-xs sm:text-sm text-green-700 flex items-center gap-1 font-medium">
+                          <p className="text-xs sm:text-sm text-green-600 flex items-center gap-1">
                             <CheckCircle className="w-3 h-3" />
                             Currently signed in
                           </p>
