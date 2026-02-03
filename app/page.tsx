@@ -9,7 +9,7 @@ import { useBranding } from "@/hooks/use-branding"
 
 export default function HomePage() {
   const { branding, isLoading } = useBranding()
-  console.log(branding)
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-secondary/50 to-background">
       <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-50">

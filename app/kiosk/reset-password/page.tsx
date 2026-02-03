@@ -13,9 +13,11 @@ import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { Logo } from "@/components/logo"
+import { useBranding } from "@/hooks/use-branding"
 
 export default function ResetPasswordPage() {
     const router = useRouter()
+    const { branding } = useBranding()
     const [password, setPassword] = useState("")
     const [confirmPassword, setConfirmPassword] = useState("")
     const [showPassword, setShowPassword] = useState(false)
@@ -28,6 +30,7 @@ export default function ResetPasswordPage() {
     useEffect(() => {
         async function checkSession() {
             const supabase = createClient()
+            
             const { data: { session } } = await supabase.auth.getSession()
 
             // Check if this is a recovery session (user clicked email link)
@@ -110,7 +113,7 @@ export default function ResetPasswordPage() {
                     <div className="container flex h-14 items-center px-4">
                         <Link href="/kiosk" className="flex items-center gap-2">
                             <Image src="/talus-t-logo.png" alt="Talus" width={32} height={32} className="rounded" />
-                            <span className="font-semibold">Talus Sign In</span>
+                            <span className="font-semibold">{branding.companyName || "Gatekeeper.io"} Sign In</span>
                         </Link>
                     </div>
                 </header>
@@ -129,7 +132,7 @@ export default function ResetPasswordPage() {
                     <div className="container flex h-14 items-center px-4">
                         <Link href="/kiosk" className="flex items-center gap-2">
                             <Image src="/talus-t-logo.png" alt="Talus" width={32} height={32} className="rounded" />
-                            <span className="font-semibold">Talus Sign In</span>
+                            <span className="font-semibold">{branding.companyName || "Gatekeeper.io"} Sign In</span>
                         </Link>
                     </div>
                 </header>

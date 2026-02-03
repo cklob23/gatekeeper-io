@@ -42,7 +42,7 @@ import { useBranding } from "@/hooks/use-branding"
 type KioskMode = "home" | "sign-in" | "booking" | "training" | "sign-out" | "employee-login" | "employee-dashboard" | "success" | "photo"
 
 // Storage key for remembered employee
-const REMEMBERED_EMPLOYEE_KEY = "talusag_remembered_employee"
+const REMEMBERED_EMPLOYEE_KEY = "gatekeeperio_remembered_employee"
 
 interface RememberedEmployee {
   id: string
@@ -350,7 +350,7 @@ export default function KioskPage() {
         // Using OpenStreetMap's Nominatim API for reverse geocoding (free, no API key needed)
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userCoords?.lat}&lon=${userCoords?.lng}&zoom=10`,
-          { headers: { "User-Agent": "TalusSignIn/1.0" } }
+          { headers: { "User-Agent": "Gatekeeper.io/1.0" } }
         )
 
         if (response.ok) {
@@ -1055,9 +1055,9 @@ export default function KioskPage() {
                 <div class="lanyard-slot"></div>
                 <div class="photo-section">
                   ${photoUrl || capturedPhoto
-                    ? `<img src="${photoUrl || capturedPhoto}" class="visitor-photo" crossorigin="anonymous" />`
-                    : `<div class="photo-placeholder">${selectedBooking.visitor_first_name?.[0] || ""}${selectedBooking.visitor_last_name?.[0] || ""}</div>`
-                  }
+            ? `<img src="${photoUrl || capturedPhoto}" class="visitor-photo" crossorigin="anonymous" />`
+            : `<div class="photo-placeholder">${selectedBooking.visitor_first_name?.[0] || ""}${selectedBooking.visitor_last_name?.[0] || ""}</div>`
+          }
                 </div>
                 <div class="info-section">
                   <img src="${window.location.origin}/${branding.companyLogo || "icon.png"} alt="Logo" class="logo" />
@@ -2013,7 +2013,7 @@ export default function KioskPage() {
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-6 sm:mb-12">
               <h1 className="text-2xl sm:text-4xl font-bold text-foreground mb-2 sm:mb-3">Visitor Check-In</h1>
-              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName || "Talus"}. Please sign in or sign out below.</p>
+              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName || "Gatekeeper.io"}. Please sign in or sign out below.</p>
             </div>
 
             {/* Visitor options - always shown */}
@@ -2076,7 +2076,7 @@ export default function KioskPage() {
             <div className="mt-4 sm:mt-8">
               {/* Employee Login/Sign Out Card - Show different state based on sign-in status */}
               {employeeSignedIn && currentEmployee ? (
-                <Card className="border-green-200 bg-green-50/50 mb-4 sm:mb-6">
+                <Card className="border-blue-200 bg-blue-50/50 mb-4 sm:mb-6">
                   <CardContent className="py-3 sm:py-4 px-3 sm:px-6">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 sm:gap-4">
@@ -2088,7 +2088,7 @@ export default function KioskPage() {
                         </Avatar>
                         <div className="min-w-0">
                           <h3 className="font-semibold text-sm sm:text-base truncate">{currentEmployee.full_name || currentEmployee.email}</h3>
-                          <p className="text-xs sm:text-sm text-green-600 flex items-center gap-1">
+                          <p className="text-xs sm:text-sm text-green-700 flex items-center gap-1 font-medium">
                             <CheckCircle className="w-3 h-3" />
                             Currently signed in
                           </p>
@@ -2120,7 +2120,7 @@ export default function KioskPage() {
                         </div>
                         <div>
                           <h3 className="font-semibold text-sm sm:text-base">Employee Sign In</h3>
-                          <p className="text-xs sm:text-sm text-muted-foreground">Talus employees sign in here</p>
+                          <p className="text-xs sm:text-sm text-muted-foreground">{branding.companyName || "Gatekeeper.io"} employees sign in here</p>
                         </div>
                       </div>
                       <ArrowLeft className="w-5 h-5 text-muted-foreground rotate-180 shrink-0" />
@@ -2536,7 +2536,7 @@ export default function KioskPage() {
                   </div>
                   <div>
                     <CardTitle className="text-xl sm:text-2xl">Employee Sign In</CardTitle>
-                    <CardDescription className="text-xs sm:text-sm">Sign in with your Talus credentials</CardDescription>
+                    <CardDescription className="text-xs sm:text-sm">Sign in with your {branding.companyName || "Gatekeeper.io"} credentials</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -2550,7 +2550,7 @@ export default function KioskPage() {
                       required
                       value={employeeEmail}
                       onChange={(e) => setEmployeeEmail(e.target.value)}
-                      placeholder="you@talusag.com"
+                      placeholder="you@company.com"
                     />
                   </div>
 
@@ -2836,7 +2836,7 @@ export default function KioskPage() {
                       />
                       <label htmlFor="acknowledge" className="text-sm leading-relaxed cursor-pointer">
                         I confirm that I have watched and understood the safety training video. I agree to follow
-                        all safety guidelines and procedures while on Talus premises. I understand that failure
+                        all safety guidelines and procedures while on {branding.companyName || "Gatekeeper.io"} premises. I understand that failure
                         to comply may result in being asked to leave the facility.
                       </label>
                     </div>
@@ -3016,7 +3016,7 @@ export default function KioskPage() {
                 <p className="text-xs sm:text-sm text-muted-foreground mb-4 sm:mb-6">
                   {successData.type === "in"
                     ? "Please collect your visitor badge from reception."
-                    : "Thank you for visiting Talus."}
+                    : `Thank you for visiting ${branding.companyName || "Gatekeeper.io"}.`}
                 </p>
 
                 <Button onClick={handleReset} size="lg" className="w-full">
