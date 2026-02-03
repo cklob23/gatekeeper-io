@@ -25,6 +25,7 @@ import type { Evacuation, SignIn, EmployeeSignIn, Profile, Location } from "@/ty
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { formatDateTime, formatFullDateTime } from "@/lib/timezone"
 import { logAudit } from "@/lib/audit-log"
+import { useTimezone } from "@/contexts/timezone-context"
 
 interface EmployeeSignInWithJoins extends Omit<EmployeeSignIn, 'profile' | 'location'> {
   profile: Profile | null
@@ -46,6 +47,7 @@ export default function EvacuationsPage() {
   const [locations, setLocations] = useState<Location[]>([])
   const [selectedLocationId, setSelectedLocationId] = useState<string>("")
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const { timezone: userTimezone } = useTimezone()
 
   async function loadData() {
     setIsLoading(true)
@@ -306,7 +308,7 @@ export default function EvacuationsPage() {
                   EVACUATION IN PROGRESS
                 </CardTitle>
                 <CardDescription className="text-xs sm:text-sm">
-                  Started {formatFullDateTime(activeEvacuation.started_at, (activeEvacuation as Evacuation & { location?: Location }).location?.timezone || "UTC")}
+                  Started {formatFullDateTime(activeEvacuation.started_at, userTimezone)}
                   {activeEvacuation.reason && ` - ${activeEvacuation.reason}`}
                   {(activeEvacuation as Evacuation & { location?: Location }).location && 
                     ` at ${(activeEvacuation as Evacuation & { location?: Location }).location?.name}`}
@@ -427,7 +429,7 @@ export default function EvacuationsPage() {
                     <div key={evac.id} className="border rounded-lg p-3 space-y-2">
                       <div className="flex items-start justify-between">
                         <p className="font-medium text-sm">
-                          {formatDateTime(evac.started_at, evacWithProfiles.location?.timezone || "UTC")}
+                          {formatDateTime(evac.started_at, userTimezone)}
                         </p>
                         {evac.all_clear ? (
                           <Badge variant="secondary" className="text-xs">All Clear</Badge>
@@ -504,7 +506,7 @@ export default function EvacuationsPage() {
                       
                       return (
                         <TableRow key={evac.id}>
-                          <TableCell>{formatDateTime(evac.started_at, evacWithProfiles.location?.timezone || "UTC")}</TableCell>
+                          <TableCell>{formatDateTime(evac.started_at, userTimezone)}</TableCell>
                           <TableCell>
                             {evac.ended_at
                               ? (() => {

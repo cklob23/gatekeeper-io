@@ -19,6 +19,7 @@ export interface Profile {
   phone: string | null
   department: string | null
   avatar_url: string | null
+  timezone: string | null
   last_password_change: string | null
   last_auth_time: string | null
   failed_login_attempts: number
