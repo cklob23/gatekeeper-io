@@ -1820,6 +1820,7 @@ export default function KioskPage() {
       setEmployeeSignedIn(true)
       setMode("employee-dashboard")
     } catch (err) {
+      console.log("Employee sign-in error:", err)
       setError(err instanceof Error ? err.message : "Failed to sign in")
     } finally {
       setIsLoading(false)
