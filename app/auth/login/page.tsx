@@ -50,10 +50,10 @@ export default function LoginPage() {
       // First, sign out any existing session to ensure clean OAuth flow
       // This prevents stale refresh token issues
       await supabase.auth.signOut()
-      
+
       // Construct redirect URL - must match what's configured in Supabase Auth settings
       const callbackUrl = `${window.location.origin}/auth/callback?type=admin&next=/admin`
-      
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "azure",
         options: {
@@ -64,7 +64,7 @@ export default function LoginPage() {
           },
         },
       })
-      
+
       if (error) throw error
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
@@ -115,7 +115,7 @@ export default function LoginPage() {
                   <Button type="submit" className="w-full" disabled={isLoading}>
                     {isLoading ? "Signing in..." : "Sign In"}
                   </Button>
-                  
+
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center">
                       <span className="w-full border-t" />
@@ -133,20 +133,20 @@ export default function LoginPage() {
                     disabled={isLoading}
                   >
                     <svg className="mr-2 h-4 w-4" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
-                      <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
-                      <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
-                      <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+                      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
                     </svg>
                     Sign in with Microsoft
                   </Button>
                 </div>
-                {/* <div className="mt-4 text-center text-xs sm:text-sm">
+                <div className="mt-4 text-center text-xs sm:text-sm">
                   Don&apos;t have an account?{" "}
                   <Link href="/auth/sign-up" className="underline underline-offset-4 text-primary">
                     Sign up
                   </Link>
-                </div> */}
+                </div>
               </form>
             </CardContent>
           </Card>
