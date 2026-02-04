@@ -37,7 +37,7 @@ import type { VisitorType, Host, Location, Profile } from "@/types/database"
 import Link from "next/link"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { formatTime, formatDate, formatDateTime, getTimezoneAbbreviation, toIANATimezone } from "@/lib/timezone"
-import { logAudit } from "@/lib/audit-log"
+import { logAudit, logAuditViaApi } from "@/lib/audit-log"
 import { loadPasswordPolicy, isPasswordExpired, needsReauthentication, getDaysUntilExpiration } from "@/lib/password-policy"
 import { useBranding } from "@/hooks/use-branding"
 
@@ -147,6 +147,7 @@ export default function KioskPage() {
     purpose: string | null
     status: string
     host_id: string | null
+    location_id: string
     visitor_type_id: string | null
     visitor_type: { id: string; name: string; badge_color: string; requires_training: boolean } | null
   }>>([])
@@ -205,6 +206,7 @@ export default function KioskPage() {
             last_auth_time: profile.last_auth_time,
             failed_login_attempts: profile.failed_login_attempts,
             account_locked_until: profile.account_locked_until,
+            timezone: profile.timezone,
             created_at: profile.created_at,
             updated_at: profile.updated_at,
           })
@@ -503,6 +505,7 @@ export default function KioskPage() {
         last_auth_time: null,
         failed_login_attempts: 0,
         account_locked_until: null,
+        timezone: null,
         created_at: "",
         updated_at: "",
       })
@@ -606,6 +609,7 @@ export default function KioskPage() {
           purpose,
           status,
           host_id,
+          location_id,
           visitor_type_id,
           visitor_type:visitor_types(id, name, badge_color, requires_training)
         `)
@@ -883,7 +887,21 @@ export default function KioskPage() {
       .from("bookings")
       .update({ status: "checked_in" })
       .eq("id", selectedBooking.id)
-    console.log(hostNotificationsEnabled, selectedBooking.host_id)
+
+    // Log booking check-in via API
+    await logAuditViaApi({
+      action: "booking.checked_in",
+      entityType: "booking",
+      entityId: selectedBooking.id,
+      description: `Booking checked in: ${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}`,
+      metadata: {
+        booking_id: selectedBooking.id,
+        visitor_email: selectedBooking.visitor_email,
+        host_id: selectedBooking.host_id,
+        location_id: selectedBooking.location_id
+      }
+    })
+
     // Send host notification if enabled and booking has a host
     if (hostNotificationsEnabled && selectedBooking.host_id) {
       let hostEmail: string | null = null
@@ -1070,7 +1088,7 @@ export default function KioskPage() {
           }
               </div>
               <div class="info-section">
-                <img src="${window.location.origin}/${branding.companyLogo || "icon.png"}" alt="Logo" class="logo" />
+                <img src="${branding.companyLogo || `${window.location.origin}/icon.png`}" alt="Logo" class="logo" />
                 <div class="visitor-name">${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}</div>
                 <div class="visitor-type">${selectedBooking.visitor_company || "Visitor"}</div>
                 <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
@@ -1513,7 +1531,7 @@ export default function KioskPage() {
             }
                 </div>
                 <div class="info-section">
-                  <img src="${window.location.origin}/${branding.companyLogo || "icon.png"}" alt="Logo" class="logo" />
+                  <img src="${branding.companyLogo || `${window.location.origin}/icon.png`}" alt="Logo" class="logo" />
                   <div class="visitor-name">${form.firstName} ${form.lastName}</div>
                   <div class="visitor-type">${form.company || selectedType?.name || "Visitor"}</div>
                   <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
@@ -1542,6 +1560,20 @@ export default function KioskPage() {
           .from("bookings")
           .update({ status: "checked_in" })
           .eq("id", selectedBooking.id)
+
+        // Log booking check-in via API
+        await logAuditViaApi({
+          action: "booking.checked_in",
+          entityType: "booking",
+          entityId: selectedBooking.id,
+          description: `Booking checked in: ${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}`,
+          metadata: {
+            booking_id: selectedBooking.id,
+            visitor_email: selectedBooking.visitor_email,
+            host_id: selectedBooking.host_id,
+            location_id: selectedBooking.location_id
+          }
+        })
 
         // Clear booking state
         setBookingEmail("")
@@ -1723,8 +1755,8 @@ export default function KioskPage() {
 
       if (updateError) throw updateError
 
-      // Log visitor sign-out
-      await logAudit({
+      // Log visitor sign-out via API to bypass RLS
+      await logAuditViaApi({
         action: "visitor.sign_out",
         entityType: "visitor",
         entityId: signIn.visitor_id,

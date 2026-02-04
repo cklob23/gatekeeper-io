@@ -102,6 +102,42 @@ export async function logAudit({
 }
 
 /**
+ * Log audit entry via API route (bypasses RLS)
+ * Use this for kiosk actions where the user may not be authenticated
+ */
+export async function logAuditViaApi({
+  action,
+  entityType,
+  entityId,
+  description,
+  metadata = {},
+  userId,
+}: LogAuditParams & { userId?: string | null }): Promise<void> {
+  try {
+    const response = await fetch("/api/audit-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        entityType,
+        entityId,
+        description,
+        metadata,
+        userId,
+      }),
+    })
+    
+    if (!response.ok) {
+      const result = await response.json()
+      console.error("[v0] Audit log API error:", result.error)
+    }
+  } catch (error) {
+    // Don't throw - audit logging should never break the app
+    console.error("[v0] Failed to log audit entry via API:", error)
+  }
+}
+
+/**
  * Server-side audit logging (use in API routes)
  */
 export async function logAuditServer({
