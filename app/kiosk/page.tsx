@@ -2198,7 +2198,7 @@ export default function KioskPage() {
             <div className="mt-4 sm:mt-8">
               {/* Employee Login/Sign Out Card - Show different state based on sign-in status */}
               {employeeSignedIn && currentEmployee ? (
-                <Card className="border-green-200 bg-green-50/50 mb-4 sm:mb-6">
+                <Card className="border-blue-200 bg-muted/50 mb-4 sm:mb-6">
                   <CardContent className="py-3 sm:py-4 px-3 sm:px-6">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 sm:gap-4">
@@ -2437,14 +2437,18 @@ export default function KioskPage() {
                   {error && <p className="text-sm text-destructive">{error}</p>}
 
                   <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
-                    {isLoading ? "Processing..." : selectedVisitorType?.requires_training ? (
-                      <>
-                        <PlayCircle className="w-4 h-4 mr-2" />
-                        Continue to Training
-                      </>
-                    ) : (
-                      "Complete Sign In"
-                    )}
+                    {isLoading ? <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Continuing to Training...
+                    </>
+                      : selectedVisitorType?.requires_training ? (
+                        <>
+                          <PlayCircle className="w-4 h-4 mr-2" />
+                          Continue to Training
+                        </>
+                      ) : (
+                        "Complete Sign In"
+                      )}
                   </Button>
                 </form>
               </CardContent>
