@@ -20,7 +20,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Plus, Pencil, Trash2, Settings, Tag, MapPin, Sun, Moon, Monitor, Upload, Building2, Mail, Eye, EyeOff, ImageIcon, X, Palette, ShieldCheck, Globe } from "lucide-react"
+import { Plus, Pencil, Trash2, Settings, Tag, MapPin, Sun, Moon, Monitor, Upload, Building2, Mail, Eye, EyeOff, ImageIcon, X, Palette, ShieldCheck, Globe, Copy, Check, ExternalLink, Loader2 } from "lucide-react"
 import { useUserTimezone, COMMON_TIMEZONES } from "@/hooks/use-user-timezone"
 import { useTheme } from "next-themes"
 import type { VisitorType } from "@/types/database"
@@ -53,6 +53,13 @@ interface SmtpSettings {
   smtp_user: string
   smtp_pass: string
   smtp_from_email: string
+}
+
+interface MicrosoftSsoSettings {
+  microsoft_sso_enabled: boolean
+  azure_tenant_id: string
+  azure_client_id: string
+  azure_client_secret: string
 }
 
 interface PasswordPolicySettings {
@@ -110,7 +117,7 @@ export default function SettingsPage() {
     primary_color_dark: "#005b9e",
     accent_color_light: "#d3e0ea",
     accent_color_dark: "#152b3b",
-    
+
   })
   const [savingColors, setSavingColors] = useState(false)
   const [passwordPolicy, setPasswordPolicy] = useState<PasswordPolicySettings>({
@@ -121,9 +128,20 @@ export default function SettingsPage() {
     password_reuse_count: 5,
   })
   const [savingPasswordPolicy, setSavingPasswordPolicy] = useState(false)
+  const [microsoftSso, setMicrosoftSso] = useState<MicrosoftSsoSettings>({
+    microsoft_sso_enabled: false,
+    azure_tenant_id: "",
+    azure_client_id: "",
+    azure_client_secret: "",
+  })
+  const [savingMicrosoftSso, setSavingMicrosoftSso] = useState(false)
+  const [showAzureSecret, setShowAzureSecret] = useState(false)
+  const [supabaseCallbackUrl, setSupabaseCallbackUrl] = useState("")
+  const [microsoftSsoError, setMicrosoftSsoError] = useState<string | null>(null)
+  const [microsoftSsoSuccess, setMicrosoftSsoSuccess] = useState<string | null>(null)
   const [form, setForm] = useState({
     name: "",
-    badgeColor: "#10B981",
+    badgeColor: "#005b9e",
     requiresHost: true,
     requiresCompany: false,
     requiresTraining: false,
@@ -493,6 +511,82 @@ export default function SettingsPage() {
     setSavingSmtp(false)
   }
 
+  async function loadMicrosoftSsoSettings() {
+    try {
+      const response = await fetch("/api/admin/microsoft-sso")
+      if (!response.ok) {
+        const data = await response.json()
+        setMicrosoftSsoError(data.error || "Failed to load Microsoft SSO config. Check that SUPABASE_ACCESS_TOKEN is set.")
+        return
+      }
+      const data = await response.json()
+
+      // Extract tenant ID from the azure URL
+      // Format: https://login.microsoftonline.com/<tenant_id>/v2.0
+      let tenantId = ""
+      if (data.url) {
+        const match = data.url.match(/microsoftonline\.com\/([^/]+)/)
+        if (match) tenantId = match[1]
+      }
+
+      setMicrosoftSso({
+        microsoft_sso_enabled: data.enabled || false,
+        azure_tenant_id: tenantId,
+        azure_client_id: data.client_id || "",
+        azure_client_secret: data.has_secret ? "••••••••" : "",
+      })
+      setSupabaseCallbackUrl(data.callback_url || "")
+    } catch {
+      setMicrosoftSsoError("Failed to connect to Supabase Management API")
+    }
+  }
+
+  async function saveMicrosoftSsoSettings() {
+    setSavingMicrosoftSso(true)
+    setMicrosoftSsoError(null)
+    setMicrosoftSsoSuccess(null)
+
+    try {
+      const response = await fetch("/api/admin/microsoft-sso", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: microsoftSso.microsoft_sso_enabled,
+          client_id: microsoftSso.azure_client_id,
+          secret: microsoftSso.azure_client_secret,
+          tenant_id: microsoftSso.azure_tenant_id,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setMicrosoftSsoError(data.error || "Failed to save Microsoft SSO config")
+        return
+      }
+
+      setSupabaseCallbackUrl(data.callback_url || "")
+      setMicrosoftSsoSuccess(data.message || "Settings saved successfully")
+
+      await logAudit({
+        action: "settings.updated",
+        entityType: "settings",
+        description: "Microsoft SSO settings updated via Supabase Management API",
+        metadata: {
+          microsoft_sso_enabled: microsoftSso.microsoft_sso_enabled,
+          azure_tenant_id: microsoftSso.azure_tenant_id,
+        },
+      })
+
+      // Reload to get the latest state from Supabase
+      await loadMicrosoftSsoSettings()
+    } catch {
+      setMicrosoftSsoError("Failed to save Microsoft SSO settings")
+    } finally {
+      setSavingMicrosoftSso(false)
+    }
+  }
+
   async function loadPasswordPolicySettings() {
     const supabase = createClient()
     const { data } = await supabase
@@ -684,6 +778,7 @@ export default function SettingsPage() {
     loadBrandingSettings()
     loadSmtpSettings()
     loadColorSettings()
+    loadMicrosoftSsoSettings()
     loadPasswordPolicySettings()
   }, [])
 
@@ -1564,6 +1659,183 @@ export default function SettingsPage() {
             <Button onClick={saveSmtpSettings} disabled={savingSmtp}>
               {savingSmtp ? "Saving..." : "Save SMTP Settings"}
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Microsoft SSO Card */}
+      <Card>
+        <CardHeader className="p-4 sm:p-6">
+          <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+            <svg className="w-5 h-5" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+              <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+              <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+              <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+            </svg>
+            Microsoft Authentication (Azure AD)
+          </CardTitle>
+          <CardDescription className="text-xs sm:text-sm">
+            Enable Sign in with Microsoft for admins and kiosk receptionists using your organization&apos;s Azure AD tenant.
+            Settings are applied directly to Supabase Auth.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0 space-y-6">
+          {microsoftSsoError && (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive space-y-1">
+              <p>{microsoftSsoError.includes("https://") ? microsoftSsoError.split("https://")[0] : microsoftSsoError}</p>
+              {microsoftSsoError.includes("supabase.com/dashboard/account/tokens") && (
+                <p>
+                  <a
+                    href="https://supabase.com/dashboard/account/tokens"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline font-medium inline-flex items-center gap-1"
+                  >
+                    Generate a personal access token here <ExternalLink className="w-3 h-3" />
+                  </a>
+                  {" "}and add it as the <code className="bg-destructive/20 px-1 py-0.5 rounded text-xs font-mono">SUPABASE_ACCESS_TOKEN</code> environment variable.
+                </p>
+              )}
+            </div>
+          )}
+          {microsoftSsoSuccess && (
+            <div className="rounded-lg border border-green-500/50 bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
+              {microsoftSsoSuccess}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <Label className="text-sm">Enable Microsoft SSO</Label>
+              <p className="text-xs sm:text-sm text-muted-foreground">Show the &quot;Sign in with Microsoft&quot; button on the login and kiosk pages</p>
+            </div>
+            <Switch
+              checked={microsoftSso.microsoft_sso_enabled}
+              onCheckedChange={(checked) => setMicrosoftSso(prev => ({ ...prev, microsoft_sso_enabled: checked }))}
+            />
+          </div>
+
+          {microsoftSso.microsoft_sso_enabled && (
+            <>
+              <div className="rounded-lg border bg-muted/50 p-4 space-y-3">
+                <p className="text-sm font-medium">Setup Instructions</p>
+                <ol className="text-xs text-muted-foreground list-decimal list-inside space-y-1.5">
+                  <li>Go to the <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener noreferrer" className="underline text-primary inline-flex items-center gap-1">Azure Portal - App Registrations <ExternalLink className="w-3 h-3" /></a></li>
+                  <li>Click &quot;New registration&quot; and give it a name (e.g., Gatekeeper Visitor Management)</li>
+                  <li>Under &quot;Supported account types&quot;, select your desired option (single or multi-tenant)</li>
+                  <li>Set the <strong>Redirect URI</strong> (Web) to the Callback URL shown below</li>
+                  <li>Copy the Application (client) ID and Directory (tenant) ID into the fields below</li>
+                  <li>Under &quot;Certificates & secrets&quot;, create a new client secret and paste the <strong>Value</strong> (not the Secret ID) below</li>
+                  <li>Under &quot;API permissions&quot;, add: <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">User.Read</code>, <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">email</code>, <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">profile</code>, <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">openid</code></li>
+                </ol>
+              </div>
+
+              {/* Callback URL - read only */}
+              <div className="space-y-2">
+                <Label>Callback URL (for Azure AD Redirect URI)</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    readOnly
+                    value={supabaseCallbackUrl || "Save settings to generate callback URL"}
+                    className="font-mono text-sm bg-muted/50"
+                  />
+                  {supabaseCallbackUrl && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 bg-transparent"
+                      onClick={() => {
+                        navigator.clipboard.writeText(supabaseCallbackUrl)
+                      }}
+                    >
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Copy this URL and add it as a Redirect URI in your Azure AD App Registration (Platform: Web)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="azure_tenant_id">Directory (Tenant) ID</Label>
+                <Input
+                  id="azure_tenant_id"
+                  placeholder="e.g., 12345678-abcd-1234-efgh-123456789abc"
+                  value={microsoftSso.azure_tenant_id}
+                  onChange={(e) => setMicrosoftSso(prev => ({ ...prev, azure_tenant_id: e.target.value }))}
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Found in Azure AD under &quot;Overview&quot; &rarr; &quot;Directory (tenant) ID&quot;
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="azure_client_id">Application (Client) ID</Label>
+                <Input
+                  id="azure_client_id"
+                  placeholder="e.g., 87654321-dcba-4321-hgfe-cba987654321"
+                  value={microsoftSso.azure_client_id}
+                  onChange={(e) => setMicrosoftSso(prev => ({ ...prev, azure_client_id: e.target.value }))}
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Found in your App Registration under &quot;Overview&quot; &rarr; &quot;Application (client) ID&quot;
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="azure_client_secret">Client Secret Value</Label>
+                <div className="relative">
+                  <Input
+                    id="azure_client_secret"
+                    type={showAzureSecret ? "text" : "password"}
+                    placeholder="Enter your client secret value"
+                    value={microsoftSso.azure_client_secret}
+                    onChange={(e) => setMicrosoftSso(prev => ({ ...prev, azure_client_secret: e.target.value }))}
+                    className="font-mono text-sm pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                    onClick={() => setShowAzureSecret(!showAzureSecret)}
+                  >
+                    {showAzureSecret ? (
+                      <EyeOff className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <Eye className="w-4 h-4 text-muted-foreground" />
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Use the secret <strong>Value</strong>, not the Secret ID. Found under &quot;Certificates & secrets&quot; &rarr; &quot;Client secrets&quot;
+                </p>
+              </div>
+            </>
+          )}
+
+          <div className="flex items-center gap-3 pt-2">
+            <Button onClick={saveMicrosoftSsoSettings} disabled={savingMicrosoftSso}>
+              {savingMicrosoftSso ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Configuring Supabase...
+                </>
+              ) : (
+                "Save Microsoft Settings"
+              )}
+            </Button>
+            {microsoftSso.microsoft_sso_enabled && microsoftSso.azure_client_id && microsoftSso.azure_tenant_id && (
+              <span className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+                <Check className="w-3.5 h-3.5" />
+                Configured
+              </span>
+            )}
           </div>
         </CardContent>
       </Card>

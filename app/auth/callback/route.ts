@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
   if (code) {
     const cookieStore = await cookies()
-    
+
     // Track cookies that need to be set on the response
     const cookiesToSet: { name: string; value: string; options: Record<string, unknown> }[] = []
 
@@ -61,12 +61,12 @@ export async function GET(request: Request) {
     // Helper function to create redirect with all session cookies
     function createRedirectWithCookies(url: string): NextResponse {
       const response = NextResponse.redirect(url)
-      
+
       // Apply all cookies that Supabase wants to set to the redirect response
       for (const { name, value, options } of cookiesToSet) {
         response.cookies.set(name, value, options)
       }
-      
+
       return response
     }
 
@@ -94,7 +94,7 @@ export async function GET(request: Request) {
             auto_signed_in: false,
             device_id: "Microsoft OAuth",
           })
-          
+
           // Log employee sign-in
           await logAuditServer({
             supabase,
@@ -146,6 +146,35 @@ export async function GET(request: Request) {
         }
       }
 
+      // Handle kiosk receptionist login via Microsoft
+      if (type === "kiosk") {
+        // Verify the user has a profile
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("id, email, full_name, role")
+          .eq("id", data.user.id)
+          .single()
+
+        if (profile) {
+          await logAuditServer({
+            supabase,
+            userId: data.user.id,
+            action: "kiosk.receptionist_login",
+            entityType: "user",
+            entityId: data.user.id,
+            description: `Receptionist logged into kiosk: ${profile.full_name || data.user.email} (${profile.email || data.user.email})`,
+            metadata: { method: "microsoft_oauth", portal: "kiosk", email: profile.email, role: profile.role }
+          })
+
+          return createRedirectWithCookies(getRedirectUrl("/kiosk"))
+        }
+
+        // No profile - redirect back with error
+        return createRedirectWithCookies(
+          getRedirectUrl("/kiosk?error=no_profile")
+        )
+      }
+
       // Log admin OAuth login
       await logAuditServer({
         supabase,
@@ -156,7 +185,7 @@ export async function GET(request: Request) {
         description: `Admin logged in via Microsoft: ${data.user.email}`,
         metadata: { method: "microsoft_oauth", portal: "admin" }
       })
-      
+
       // For admin login, redirect to admin dashboard
       return createRedirectWithCookies(getRedirectUrl(next))
     }

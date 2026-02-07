@@ -32,6 +32,8 @@ import {
   Search,
   Camera,
   RefreshCw,
+  Lock,
+  Shield,
 } from "lucide-react"
 import type { VisitorType, Host, Location, Profile } from "@/types/database"
 import Link from "next/link"
@@ -41,7 +43,7 @@ import { logAudit, logAuditViaApi } from "@/lib/audit-log"
 import { loadPasswordPolicy, isPasswordExpired, needsReauthentication, getDaysUntilExpiration } from "@/lib/password-policy"
 import { useBranding } from "@/hooks/use-branding"
 
-type KioskMode = "home" | "sign-in" | "booking" | "training" | "sign-out" | "employee-login" | "employee-dashboard" | "success" | "photo"
+type KioskMode = "receptionist-login" | "home" | "sign-in" | "booking" | "training" | "sign-out" | "employee-login" | "employee-dashboard" | "success" | "photo"
 
 // Storage key for remembered employee
 const REMEMBERED_EMPLOYEE_KEY = "remembered_employee"
@@ -72,7 +74,12 @@ export default function KioskPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const { branding } = useBranding()
-  const [mode, setMode] = useState<KioskMode>("home")
+  const [mode, setMode] = useState<KioskMode>("receptionist-login")
+  const [receptionistUser, setReceptionistUser] = useState<{ id: string; email: string; name: string } | null>(null)
+  const [receptionistEmail, setReceptionistEmail] = useState("")
+  const [receptionistPassword, setReceptionistPassword] = useState("")
+  const [receptionistLoading, setReceptionistLoading] = useState(true)
+  const [receptionistError, setReceptionistError] = useState<string | null>(null)
   const [visitorTypes, setVisitorTypes] = useState<VisitorType[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
   const [locations, setLocations] = useState<Location[]>([])
@@ -153,6 +160,132 @@ export default function KioskPage() {
   }>>([])
   const [selectedBooking, setSelectedBooking] = useState<typeof bookingResults[0] | null>(null)
 
+
+  // Check if receptionist is already authenticated on mount
+  useEffect(() => {
+    async function checkReceptionistSession() {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+
+      if (user) {
+        // Verify they have a valid profile (staff, admin, or employee)
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("id, email, full_name, role")
+          .eq("id", user.id)
+          .single()
+
+        if (profile) {
+          setReceptionistUser({
+            id: profile.id,
+            email: profile.email || user.email || "",
+            name: profile.full_name || profile.email || "",
+          })
+          setMode("home")
+        }
+      }
+      setReceptionistLoading(false)
+    }
+    checkReceptionistSession()
+  }, [])
+
+  // Receptionist login with email/password
+  async function handleReceptionistLogin(e: React.FormEvent) {
+    e.preventDefault()
+    setReceptionistLoading(true)
+    setReceptionistError(null)
+
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: receptionistEmail,
+        password: receptionistPassword,
+      })
+      if (error) throw error
+
+      // Verify profile exists
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("id, email, full_name, role")
+        .eq("id", data.user.id)
+        .single()
+
+      if (!profile) {
+        await supabase.auth.signOut()
+        throw new Error("No profile found for this account.")
+      }
+
+      await logAuditViaApi({
+        action: "kiosk.receptionist_login",
+        entityType: "user",
+        entityId: profile.id,
+        description: `Receptionist logged into kiosk: ${profile.full_name || profile.email} (${profile.email})`,
+        metadata: { method: "password", portal: "kiosk", email: profile.email, role: profile.role },
+        userId: profile.id,
+      })
+
+      setReceptionistUser({
+        id: profile.id,
+        email: profile.email || data.user.email || "",
+        name: profile.full_name || profile.email || "",
+      })
+      setReceptionistEmail("")
+      setReceptionistPassword("")
+      setMode("home")
+    } catch (error: unknown) {
+      setReceptionistError(error instanceof Error ? error.message : "Login failed")
+    } finally {
+      setReceptionistLoading(false)
+    }
+  }
+
+  // Receptionist login with Microsoft
+  async function handleReceptionistMicrosoftLogin() {
+    setReceptionistLoading(true)
+    setReceptionistError(null)
+
+    try {
+      const supabase = createClient()
+      await supabase.auth.signOut()
+
+      const callbackUrl = `${window.location.origin}/auth/callback?type=kiosk&next=/kiosk`
+
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "azure",
+        options: {
+          redirectTo: callbackUrl,
+          scopes: "email profile openid User.Read",
+          queryParams: {
+            prompt: "select_account",
+          },
+        },
+      })
+
+      if (error) throw error
+    } catch (error: unknown) {
+      setReceptionistError(error instanceof Error ? error.message : "Microsoft login failed")
+      setReceptionistLoading(false)
+    }
+  }
+
+  // Receptionist logout - locks the kiosk
+  async function handleReceptionistLogout() {
+    const supabase = createClient()
+
+    await logAuditViaApi({
+      action: "kiosk.receptionist_logout",
+      entityType: "user",
+      entityId: receptionistUser?.id,
+      description: `Receptionist logged out of kiosk: ${receptionistUser?.name} (${receptionistUser?.email})`,
+      metadata: { portal: "kiosk", email: receptionistUser?.email },
+      userId: receptionistUser?.id,
+    })
+
+    await supabase.auth.signOut()
+    setReceptionistUser(null)
+    setMode("receptionist-login")
+  }
+
   // Handle OAuth callback from Microsoft login
   useEffect(() => {
     const employeeSignedIn = searchParams.get("employee_signed_in")
@@ -164,6 +297,9 @@ export default function KioskPage() {
         setError("Your account is not registered as an employee. Please contact an administrator.")
       } else if (oauthError === "profile_creation_failed") {
         setError("Failed to create your profile. Please try again or contact support.")
+      } else if (oauthError === "no_profile") {
+        setReceptionistError("No profile found for this account. Please contact an administrator.")
+        setMode("receptionist-login")
       } else {
         setError("Sign in failed. Please try again.")
       }
@@ -932,7 +1068,7 @@ export default function KioskPage() {
           }
         }
       }
-      console.log(hostName, hostEmail)
+
       if (hostEmail) {
         try {
           await fetch("/api/notify-host", {
@@ -1320,6 +1456,8 @@ export default function KioskPage() {
       // Create sign-in record
       const { data: signInRecord, error: signInError } = await supabase.from("sign_ins").insert({
         visitor_id: visitor.id,
+        visitor_name: `${form.firstName} ${form.lastName}`,
+        visitor_email: form.email || null,
         location_id: selectedLocation,
         visitor_type_id: form.visitorTypeId || null,
         host_id: form.hostId || null,
@@ -2052,85 +2190,203 @@ export default function KioskPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/30">
-      <header className="bg-background/80 backdrop-blur-sm border-b sticky top-0 z-50">
-        <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-between gap-2">
-          <div className="shrink-0">
+      {mode === "receptionist-login" ? (
+        <header className="bg-background/80 backdrop-blur-sm border-b sticky top-0 z-50">
+          <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-center">
             <Link href="/">
               <Logo />
             </Link>
           </div>
-          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-            {/* Clock display with location timezone */}
-            <div className="hidden md:flex items-center gap-2 text-sm border-r pr-4 mr-2">
-              <Clock className="w-4 h-4 text-muted-foreground" />
-              <span className="font-medium text-foreground">
-                {currentTime.toLocaleTimeString("en-US", {
-                  timeZone: toIANATimezone(currentTimezone),
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
-              <span className="font-medium text-xs text-muted-foreground">
-                {getTimezoneAbbreviation(currentTimezone)}
-              </span>
+        </header>
+      ) : (
+
+        <header className="bg-background/80 backdrop-blur-sm border-b sticky top-0 z-50">
+          <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-between gap-2">
+            <div className="shrink-0">
+              <Link href="/">
+                <Logo />
+              </Link>
             </div>
-            {/* Location indicator */}
-            <div className="hidden sm:flex items-center gap-2 text-sm">
-              {isDetectingLocation ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                  <span className="text-muted-foreground">Detecting location...</span>
-                </>
-              ) : isSelectedDifferentFromNearest && currentLocation ? (
-                <>
-                  <Building2 className="w-4 h-4 text-amber-500" />
-                  <span className="text-foreground font-medium">{currentLocation.name}</span>
-                  {selectedLocationDistance !== null && (
-                    <Badge variant="outline" className="text-xs border-amber-500 text-amber-600">
-                      {formatDistance(selectedLocationDistance)}
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+              {/* Clock display with location timezone */}
+              <div className="hidden md:flex items-center gap-2 text-sm border-r pr-4 mr-2">
+                <Clock className="w-4 h-4 text-muted-foreground" />
+                <span className="font-medium text-foreground">
+                  {currentTime.toLocaleTimeString("en-US", {
+                    timeZone: toIANATimezone(currentTimezone),
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+                <span className="font-medium text-xs text-muted-foreground">
+                  {getTimezoneAbbreviation(currentTimezone)}
+                </span>
+              </div>
+              {/* Location indicator */}
+              <div className="hidden sm:flex items-center gap-2 text-sm">
+                {isDetectingLocation ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                    <span className="text-muted-foreground">Detecting location...</span>
+                  </>
+                ) : isSelectedDifferentFromNearest && currentLocation ? (
+                  <>
+                    <Building2 className="w-4 h-4 text-amber-500" />
+                    <span className="text-foreground font-medium">{currentLocation.name}</span>
+                    {selectedLocationDistance !== null && (
+                      <Badge variant="outline" className="text-xs border-amber-500 text-amber-600">
+                        {formatDistance(selectedLocationDistance)}
+                      </Badge>
+                    )}
+                  </>
+                ) : nearestLocation ? (
+                  <>
+                    <MapPin className="w-4 h-4 text-primary" />
+                    <span className="text-foreground font-medium">{locations.find((l) => l.id === selectedLocation)?.name != nearestLocation.location.name ? locations.find((l) => l.id === selectedLocation)?.name : nearestLocation.location.name}</span>
+                    <Badge variant="secondary" className="text-xs">
+                      {formatDistance(nearestLocation.distance)}
                     </Badge>
-                  )}
-                </>
-              ) : nearestLocation ? (
-                <>
-                  <MapPin className="w-4 h-4 text-primary" />
-                  <span className="text-foreground font-medium">{locations.find((l) => l.id === selectedLocation)?.name != nearestLocation.location.name ? locations.find((l) => l.id === selectedLocation)?.name : nearestLocation.location.name}</span>
-                  <Badge variant="secondary" className="text-xs">
-                    {formatDistance(nearestLocation.distance)}
-                  </Badge>
-                </>
-              ) : currentLocation ? (
-                <>
-                  <Building2 className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">{currentLocation.name}</span>
-                </>
-              ) : (
-                <>
-                  <Building2 className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Select location</span>
-                </>
+                  </>
+                ) : currentLocation ? (
+                  <>
+                    <Building2 className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">{currentLocation.name}</span>
+                  </>
+                ) : (
+                  <>
+                    <Building2 className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Select location</span>
+                  </>
+                )}
+              </div>
+
+              {locations.length > 1 && (
+                <Select value={selectedLocation} onValueChange={setSelectedLocation}>
+                  <SelectTrigger className="w-[140px] sm:w-[180px]">
+                    <SelectValue placeholder="Location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {locations.map((loc) => (
+                      <SelectItem key={loc.id} value={loc.id}>
+                        {loc.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {/* Receptionist lock/logout button */}
+              {receptionistUser && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-foreground bg-transparent"
+                  onClick={handleReceptionistLogout}
+                  title={`Logged in as ${receptionistUser.name}. Click to lock kiosk.`}
+                >
+                  <Lock className="w-4 h-4" />
+                  <span className="hidden sm:inline ml-1 text-xs">Lock</span>
+                </Button>
               )}
             </div>
+          </div>
+        </header>
+      )}
+      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8">
+        {mode === "receptionist-login" && (
+          <div className="max-w-sm mx-auto mt-8 sm:mt-16">
+            <div className="text-center mb-6 sm:mb-8">
+              <div className="mx-auto w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                <Shield className="w-8 h-8 sm:w-10 sm:h-10 text-primary" />
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-foreground mb-2">Kiosk Login</h1>
+              <p className="text-sm sm:text-base text-muted-foreground">
+                Employee sign-in required to activate the visitor kiosk
+              </p>
+            </div>
 
-            {locations.length > 1 && (
-              <Select value={selectedLocation} onValueChange={setSelectedLocation}>
-                <SelectTrigger className="w-[140px] sm:w-[180px]">
-                  <SelectValue placeholder="Location" />
-                </SelectTrigger>
-                <SelectContent>
-                  {locations.map((loc) => (
-                    <SelectItem key={loc.id} value={loc.id}>
-                      {loc.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {receptionistLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              </div>
+            ) : (
+              <Card>
+                <CardHeader className="text-center p-4 sm:p-6 pb-2 sm:pb-2">
+                  <CardTitle className="text-lg sm:text-xl">Employee Login</CardTitle>
+                  <CardDescription className="text-xs sm:text-sm">
+                    Sign in to unlock the visitor management kiosk
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-4 sm:p-6 pt-2 sm:pt-4">
+                  <form onSubmit={handleReceptionistLogin}>
+                    <div className="flex flex-col gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="receptionist-email" className="text-sm">Email</Label>
+                        <Input
+                          id="receptionist-email"
+                          type="email"
+                          placeholder={`employee@${branding.companyName.toLowerCase().replace(/\s+/g, "")}.com`}
+                          required
+                          value={receptionistEmail}
+                          onChange={(e) => setReceptionistEmail(e.target.value)}
+                          autoComplete="email"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="receptionist-password" className="text-sm">Password</Label>
+                        <Input
+                          id="receptionist-password"
+                          type="password"
+                          required
+                          value={receptionistPassword}
+                          onChange={(e) => setReceptionistPassword(e.target.value)}
+                          autoComplete="current-password"
+                        />
+                      </div>
+                      {receptionistError && (
+                        <p className="text-sm text-destructive">{receptionistError}</p>
+                      )}
+                      <Button type="submit" className="w-full" disabled={receptionistLoading}>
+                        {receptionistLoading ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Signing in...
+                          </>
+                        ) : (
+                          "Sign In"
+                        )}
+                      </Button>
+
+                      <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                          <span className="w-full border-t" />
+                        </div>
+                        <div className="relative flex justify-center text-xs uppercase">
+                          <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                        </div>
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full bg-transparent"
+                        onClick={handleReceptionistMicrosoftLogin}
+                        disabled={receptionistLoading}
+                      >
+                        <svg className="mr-2 h-4 w-4" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                          <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                          <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                          <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                        </svg>
+                        Sign in with Microsoft
+                      </Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
             )}
           </div>
-        </div>
-      </header>
-
-      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8">
+        )}
         {mode === "home" && (
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-6 sm:mb-12">
