@@ -14,8 +14,8 @@
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.18 0.02 240);
 
-  /* Primary (your chosen blue) */
-  --primary: oklch(0.45 0.15 240);
+  /* Primary */
+  --primary: oklch(46.356% 0.13047 249.788);
   --primary-foreground: oklch(0.98 0.01 240);
 
   /* Secondary / muted blues */
@@ -25,7 +25,7 @@
   --muted: oklch(0.95 0.01 240);
   --muted-foreground: oklch(0.5 0.02 240);
 
-  --accent: oklch(0.92 0.03 240);
+  --accent: #d3e8f7;
   --accent-foreground: oklch(0.28 0.04 240);
 
   /* Status */
@@ -76,7 +76,7 @@
   --muted: oklch(0.25 0.02 240);
   --muted-foreground: oklch(0.65 0.02 240);
 
-  --accent: oklch(0.28 0.04 240);
+  --accent: oklch(27.894% 0.04089 241.838);
   --accent-foreground: oklch(0.95 0.01 240);
 
   --destructive: oklch(0.5 0.2 25);

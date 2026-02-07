@@ -69,17 +69,17 @@ export function ThemeColorsLoader() {
         
         if (data && data.length > 0) {
           const colors: ColorSettings = {
-            primary_color_light: "#10B981",
-            primary_color_dark: "#10B981",
-            accent_color_light: "#059669",
-            accent_color_dark: "#34D399",
+            primary_color_light: "#005b9e",
+            primary_color_dark: "#005b9e",
+            accent_color_light: "#d3e8f7",
+            accent_color_dark: "#152b3b",
           }
           
           for (const setting of data) {
-            if (setting.key === "primary_color_light") colors.primary_color_light = String(setting.value || "#10B981")
-            if (setting.key === "primary_color_dark") colors.primary_color_dark = String(setting.value || "#10B981")
-            if (setting.key === "accent_color_light") colors.accent_color_light = String(setting.value || "#059669")
-            if (setting.key === "accent_color_dark") colors.accent_color_dark = String(setting.value || "#34D399")
+            if (setting.key === "primary_color_light") colors.primary_color_light = String(setting.value || "#005b9e")
+            if (setting.key === "primary_color_dark") colors.primary_color_dark = String(setting.value || "#005b9e")
+            if (setting.key === "accent_color_light") colors.accent_color_light = String(setting.value || "#d3e0ea")
+            if (setting.key === "accent_color_dark") colors.accent_color_dark = String(setting.value || "#152b3b")
           }
           
           applyColors(colors)

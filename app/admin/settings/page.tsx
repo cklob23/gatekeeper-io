@@ -106,10 +106,11 @@ export default function SettingsPage() {
   const [savingBranding, setSavingBranding] = useState(false)
   const [savingSmtp, setSavingSmtp] = useState(false)
   const [colorSettings, setColorSettings] = useState<ColorSettings>({
-    primary_color_light: "#10B981",
-    primary_color_dark: "#10B981",
-    accent_color_light: "#059669",
-    accent_color_dark: "#34D399",
+    primary_color_light: "#005b9e",
+    primary_color_dark: "#005b9e",
+    accent_color_light: "#d3e0ea",
+    accent_color_dark: "#152b3b",
+    
   })
   const [savingColors, setSavingColors] = useState(false)
   const [passwordPolicy, setPasswordPolicy] = useState<PasswordPolicySettings>({
@@ -239,16 +240,17 @@ export default function SettingsPage() {
 
     if (data && data.length > 0) {
       const loadedColors: ColorSettings = {
-        primary_color_light: "#10B981",
-        primary_color_dark: "#10B981",
-        accent_color_light: "#059669",
-        accent_color_dark: "#34D399",
+        primary_color_light: "#005b9e",
+        primary_color_dark: "#005b9e",
+        accent_color_light: "#d3e8f7",
+        accent_color_dark: "#152b3b",
       }
+
       for (const setting of data) {
-        if (setting.key === "primary_color_light") loadedColors.primary_color_light = String(setting.value || "#10B981")
-        if (setting.key === "primary_color_dark") loadedColors.primary_color_dark = String(setting.value || "#10B981")
-        if (setting.key === "accent_color_light") loadedColors.accent_color_light = String(setting.value || "#059669")
-        if (setting.key === "accent_color_dark") loadedColors.accent_color_dark = String(setting.value || "#34D399")
+        if (setting.key === "primary_color_light") loadedColors.primary_color_light = String(setting.value || "#005b9e")
+        if (setting.key === "primary_color_dark") loadedColors.primary_color_dark = String(setting.value || "#005b9e")
+        if (setting.key === "accent_color_light") loadedColors.accent_color_light = String(setting.value || "#d3e0ea")
+        if (setting.key === "accent_color_dark") loadedColors.accent_color_dark = String(setting.value || "#152b3b")
       }
       setColorSettings(loadedColors)
       // Apply color settings to CSS
@@ -1154,6 +1156,135 @@ export default function SettingsPage() {
                 : "All dates and times in the admin portal will be displayed in this timezone"}
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Color Theme Settings Card */}
+      <Card>
+        <CardHeader className="p-4 sm:p-6">
+          <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+            <Palette className="w-5 h-5" />
+            Color Theme
+          </CardTitle>
+          <CardDescription className="text-xs sm:text-sm">
+            Customize the primary and accent colors for light and dark themes
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0 space-y-6">
+          {/* Light Theme Colors */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <Sun className="w-4 h-4" />
+              Light Theme
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="primary_light">Primary Color</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="primary_light"
+                    type="color"
+                    value={colorSettings.primary_color_light}
+                    onChange={(e) => setColorSettings(prev => ({ ...prev, primary_color_light: e.target.value }))}
+                    className="w-12 h-10 p-1 cursor-pointer"
+                  />
+                  <Input
+                    value={colorSettings.primary_color_light}
+                    onChange={(e) => setColorSettings(prev => ({ ...prev, primary_color_light: e.target.value }))}
+                    className="flex-1 font-mono text-sm"
+                    placeholder="#10B981"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="accent_light">Accent Color</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="accent_light"
+                    type="color"
+                    value={colorSettings.accent_color_light}
+                    onChange={(e) => setColorSettings(prev => ({ ...prev, accent_color_light: e.target.value }))}
+                    className="w-12 h-10 p-1 cursor-pointer"
+                  />
+                  <Input
+                    value={colorSettings.accent_color_light}
+                    onChange={(e) => setColorSettings(prev => ({ ...prev, accent_color_light: e.target.value }))}
+                    className="flex-1 font-mono text-sm"
+                    placeholder="#059669"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Dark Theme Colors */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <Moon className="w-4 h-4" />
+              Dark Theme
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="primary_dark">Primary Color</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="primary_dark"
+                    type="color"
+                    value={colorSettings.primary_color_dark}
+                    onChange={(e) => setColorSettings(prev => ({ ...prev, primary_color_dark: e.target.value }))}
+                    className="w-12 h-10 p-1 cursor-pointer"
+                  />
+                  <Input
+                    value={colorSettings.primary_color_dark}
+                    onChange={(e) => setColorSettings(prev => ({ ...prev, primary_color_dark: e.target.value }))}
+                    className="flex-1 font-mono text-sm"
+                    placeholder="#10B981"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="accent_dark">Accent Color</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="accent_dark"
+                    type="color"
+                    value={colorSettings.accent_color_dark}
+                    onChange={(e) => setColorSettings(prev => ({ ...prev, accent_color_dark: e.target.value }))}
+                    className="w-12 h-10 p-1 cursor-pointer"
+                  />
+                  <Input
+                    value={colorSettings.accent_color_dark}
+                    onChange={(e) => setColorSettings(prev => ({ ...prev, accent_color_dark: e.target.value }))}
+                    className="flex-1 font-mono text-sm"
+                    placeholder="#34D399"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div className="space-y-2">
+            <Label>Preview</Label>
+            <div className="flex gap-4">
+              <div
+                className="w-20 h-10 rounded-md border flex items-center justify-center text-white text-xs font-medium"
+                style={{ backgroundColor: colorSettings.primary_color_light }}
+              >
+                Primary
+              </div>
+              <div
+                className="w-20 h-10 rounded-md border flex items-center justify-center text-white text-xs font-medium"
+                style={{ backgroundColor: colorSettings.accent_color_light }}
+              >
+                Accent
+              </div>
+            </div>
+          </div>
+
+          <Button onClick={saveColorSettings} disabled={savingColors}>
+            {savingColors ? "Saving..." : "Save Color Settings"}
+          </Button>
         </CardContent>
       </Card>
 
