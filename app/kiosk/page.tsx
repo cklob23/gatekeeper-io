@@ -1101,7 +1101,7 @@ export default function KioskPage() {
           <!DOCTYPE html>
           <html>
           <head>
-<title>Visitor Badge</title>
+          <title>Visitor Badge</title>
             <style>
               body {
                 font-family: Arial, sans-serif;
@@ -1109,7 +1109,7 @@ export default function KioskPage() {
                 padding: 20px;
               }
 
-.badge {
+              .badge {
                 width: 3.375in;
                 height: 2.125in;
                 background: #fff;
@@ -2397,17 +2397,17 @@ export default function KioskPage() {
             {/* Visitor options - always shown */}
             <div className="grid grid-cols-3 gap-3 sm:gap-6">
               <Card
-                className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all group"
+                className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all group flex flex-col h-full"
                 onClick={() => setMode("sign-in")}
               >
-                <CardHeader className="text-center pb-2 sm:pb-4 p-3 sm:p-6">
+                <CardHeader className="text-center pb-2 sm:pb-4 p-3 sm:p-6 flex-1">
                   <div className="mx-auto w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-primary/10 flex items-center justify-center mb-2 sm:mb-4 group-hover:bg-primary/20 transition-colors">
                     <UserPlus className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
                   </div>
                   <CardTitle className="text-base sm:text-2xl">Sign In</CardTitle>
                   <CardDescription className="text-xs sm:text-sm hidden sm:block">New visitor? Sign in here</CardDescription>
                 </CardHeader>
-                <CardContent className="p-3 pt-0 sm:p-6 sm:pt-0">
+                <CardContent className="p-3 pt-0 sm:p-6 sm:pt-0 mt-auto">
                   <Button className="w-full" size="lg">
                     Sign In
                   </Button>
@@ -2415,17 +2415,17 @@ export default function KioskPage() {
               </Card>
 
               <Card
-                className="cursor-pointer hover:shadow-lg hover:border-blue-500/50 transition-all group"
+                className="cursor-pointer hover:shadow-lg hover:border-blue-500/50 transition-all group flex flex-col h-full"
                 onClick={() => setMode("booking")}
               >
-                <CardHeader className="text-center pb-2 sm:pb-4 p-3 sm:p-6">
+                <CardHeader className="text-center pb-2 sm:pb-4 p-3 sm:p-6 flex-1">
                   <div className="mx-auto w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-blue-100 flex items-center justify-center mb-2 sm:mb-4 group-hover:bg-blue-200 transition-colors">
                     <CalendarCheck className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600" />
                   </div>
                   <CardTitle className="text-base sm:text-2xl">I Have a Booking</CardTitle>
                   <CardDescription className="text-xs sm:text-sm hidden sm:block">Pre-registered? Check in here</CardDescription>
                 </CardHeader>
-                <CardContent className="p-3 pt-0 sm:p-6 sm:pt-0">
+                <CardContent className="p-3 pt-0 sm:p-6 sm:pt-0 mt-auto">
                   <Button variant="outline" className="w-full bg-transparent border-blue-200 text-blue-600 hover:bg-blue-50" size="lg">
                     Check In
                   </Button>
@@ -2433,17 +2433,17 @@ export default function KioskPage() {
               </Card>
 
               <Card
-                className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all group"
+                className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all group flex flex-col h-full"
                 onClick={() => setMode("sign-out")}
               >
-                <CardHeader className="text-center pb-2 sm:pb-4 p-3 sm:p-6">
+                <CardHeader className="text-center pb-2 sm:pb-4 p-3 sm:p-6 flex-1">
                   <div className="mx-auto w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-secondary flex items-center justify-center mb-2 sm:mb-4 group-hover:bg-secondary/80 transition-colors">
                     <LogOut className="w-6 h-6 sm:w-8 sm:h-8 text-foreground" />
                   </div>
                   <CardTitle className="text-lg sm:text-2xl">Sign Out</CardTitle>
                   <CardDescription className="text-xs sm:text-sm hidden sm:block">Leaving? Sign out here</CardDescription>
                 </CardHeader>
-                <CardContent className="p-3 pt-0 sm:p-6 sm:pt-0">
+                <CardContent className="p-3 pt-0 sm:p-6 sm:pt-0 mt-auto">
                   <Button variant="secondary" className="w-full" size="lg">
                     Sign Out
                   </Button>
