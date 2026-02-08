@@ -76,6 +76,7 @@ export default function KioskPage() {
   const { branding } = useBranding()
   const [mode, setMode] = useState<KioskMode>("receptionist-login")
   const [receptionistUser, setReceptionistUser] = useState<{ id: string; email: string; name: string } | null>(null)
+  const [microsoftSsoEnabled, setMicrosoftSsoEnabled] = useState(false)
   const [receptionistEmail, setReceptionistEmail] = useState("")
   const [receptionistPassword, setReceptionistPassword] = useState("")
   const [receptionistLoading, setReceptionistLoading] = useState(true)
@@ -160,33 +161,34 @@ export default function KioskPage() {
   }>>([])
   const [selectedBooking, setSelectedBooking] = useState<typeof bookingResults[0] | null>(null)
 
-
-  // Check if receptionist is already authenticated on mount
+  // Check if receptionist is already authenticated via separate cookie
   useEffect(() => {
     async function checkReceptionistSession() {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      try {
+        const response = await fetch("/api/kiosk/receptionist-session")
+        const data = await response.json()
 
-      if (user) {
-        // Verify they have a valid profile (staff, admin, or employee)
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("id, email, full_name, role")
-          .eq("id", user.id)
-          .single()
-
-        if (profile) {
+        if (data.authenticated && data.user) {
           setReceptionistUser({
-            id: profile.id,
-            email: profile.email || user.email || "",
-            name: profile.full_name || profile.email || "",
+            id: data.user.id,
+            email: data.user.email,
+            name: data.user.name,
           })
           setMode("home")
         }
+      } catch (err) {
+        console.error("Failed to check receptionist session:", err)
+      } finally {
+        setReceptionistLoading(false)
       }
-      setReceptionistLoading(false)
     }
     checkReceptionistSession()
+
+    // Check if Microsoft SSO is enabled
+    fetch("/api/auth/microsoft-sso-status")
+      .then((res) => res.json())
+      .then((data) => setMicrosoftSsoEnabled(data.enabled === true))
+      .catch(() => setMicrosoftSsoEnabled(false))
   }, [])
 
   // Receptionist login with email/password
@@ -196,38 +198,36 @@ export default function KioskPage() {
     setReceptionistError(null)
 
     try {
-      const supabase = createClient()
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: receptionistEmail,
-        password: receptionistPassword,
+      // Use the separate receptionist session API (does not create a Supabase session)
+      const response = await fetch("/api/kiosk/receptionist-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          method: "password",
+          email: receptionistEmail,
+          password: receptionistPassword,
+        }),
       })
-      if (error) throw error
 
-      // Verify profile exists
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id, email, full_name, role")
-        .eq("id", data.user.id)
-        .single()
+      const data = await response.json()
 
-      if (!profile) {
-        await supabase.auth.signOut()
-        throw new Error("No profile found for this account.")
+      if (!response.ok) {
+        throw new Error(data.error || "Login failed")
       }
 
       await logAuditViaApi({
         action: "kiosk.receptionist_login",
         entityType: "user",
-        entityId: profile.id,
-        description: `Receptionist logged into kiosk: ${profile.full_name || profile.email} (${profile.email})`,
-        metadata: { method: "password", portal: "kiosk", email: profile.email, role: profile.role },
-        userId: profile.id,
+        entityId: data.user.id,
+        description: `Receptionist logged into kiosk: ${data.user.name} (${data.user.email})`,
+        metadata: { method: "password", portal: "kiosk", email: data.user.email, role: data.user.role },
+        userId: data.user.id,
       })
 
       setReceptionistUser({
-        id: profile.id,
-        email: profile.email || data.user.email || "",
-        name: profile.full_name || profile.email || "",
+        id: data.user.id,
+        email: data.user.email,
+        name: data.user.name,
       })
       setReceptionistEmail("")
       setReceptionistPassword("")
@@ -246,7 +246,6 @@ export default function KioskPage() {
 
     try {
       const supabase = createClient()
-      await supabase.auth.signOut()
 
       const callbackUrl = `${window.location.origin}/auth/callback?type=kiosk&next=/kiosk`
 
@@ -268,10 +267,8 @@ export default function KioskPage() {
     }
   }
 
-  // Receptionist logout - locks the kiosk
+  // Receptionist logout - locks the kiosk (only clears the receptionist cookie, not Supabase auth)
   async function handleReceptionistLogout() {
-    const supabase = createClient()
-
     await logAuditViaApi({
       action: "kiosk.receptionist_logout",
       entityType: "user",
@@ -281,7 +278,8 @@ export default function KioskPage() {
       userId: receptionistUser?.id,
     })
 
-    await supabase.auth.signOut()
+    // Only clear the receptionist session cookie - does NOT affect admin Supabase sessions
+    await fetch("/api/kiosk/receptionist-session", { method: "DELETE" })
     setReceptionistUser(null)
     setMode("receptionist-login")
   }
@@ -494,7 +492,7 @@ export default function KioskPage() {
         // Using OpenStreetMap's Nominatim API for reverse geocoding (free, no API key needed)
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userCoords?.lat}&lon=${userCoords?.lng}&zoom=10`,
-          { headers: { "User-Agent": "Gatekeeperio/1.0" } }
+          { headers: { "User-Agent": "GatekeeperioSignIn/1.0" } }
         )
 
         if (response.ok) {
@@ -1038,6 +1036,7 @@ export default function KioskPage() {
       }
     })
 
+    console.log(hostNotificationsEnabled, selectedBooking.host_id)
     // Send host notification if enabled and booking has a host
     if (hostNotificationsEnabled && selectedBooking.host_id) {
       let hostEmail: string | null = null
@@ -1068,7 +1067,7 @@ export default function KioskPage() {
           }
         }
       }
-
+      console.log(hostName, hostEmail)
       if (hostEmail) {
         try {
           await fetch("/api/notify-host", {
@@ -1217,7 +1216,7 @@ export default function KioskPage() {
           <body>
             <div class="badge">
               <div class="lanyard-slot"></div>
-<div class="photo-section">
+              <div class="photo-section">
                 ${photoUrl || capturedPhoto
             ? `<img src="${photoUrl || capturedPhoto}" class="visitor-photo" crossorigin="anonymous" />`
             : `<div class="photo-placeholder">${selectedBooking.visitor_first_name?.[0] || ""}${selectedBooking.visitor_last_name?.[0] || ""}</div>`
@@ -1360,8 +1359,8 @@ export default function KioskPage() {
     if (videoStarted) return
     setVideoStarted(true)
 
-    // Simulate 47.39 minutes of required watching time
-    const totalDuration = 60 * 3
+    // Simulate 3.46 minutes of required watching time
+    const totalDuration = 60 * 3.46
     let elapsed = 0
 
     videoTimerRef.current = setInterval(() => {
@@ -1395,20 +1394,25 @@ export default function KioskPage() {
     try {
       const supabase = createClient()
 
-      // Create or find visitor
-      const { data: visitor, error: visitorError } = await supabase
-        .from("visitors")
-        .insert({
+      // Create visitor via API to bypass RLS
+      const visitorResponse = await fetch("/api/kiosk/visitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           first_name: form.firstName,
           last_name: form.lastName,
           email: form.email || null,
           phone: form.phone || null,
           company: form.company || null,
-        })
-        .select()
-        .single()
+        }),
+      })
 
-      if (visitorError) throw visitorError
+      if (!visitorResponse.ok) {
+        const errorData = await visitorResponse.json()
+        throw new Error(errorData.error || "Failed to create visitor")
+      }
+
+      const { visitor } = await visitorResponse.json()
 
       // Upload photo if captured
       let photoUrl: string | null = null
@@ -1440,48 +1444,49 @@ export default function KioskPage() {
       // Store for badge printing
       setVisitorPhotoUrl(photoUrl)
 
-      // If training was required, record the completion
+      // If training was required, record the completion via API
       const selectedType = visitorTypes.find((t) => t.id === form.visitorTypeId)
       if (selectedType?.requires_training) {
-        await supabase.from("training_completions").insert({
-          visitor_id: visitor.id,
-          visitor_type_id: form.visitorTypeId,
-          expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year expiry
+        await fetch("/api/kiosk/training", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            visitor_id: visitor.id,
+            visitor_type_id: form.visitorTypeId,
+            expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          }),
         })
       }
 
       // Generate badge number
       const badgeNumber = `V${String(Date.now()).slice(-6)}`
 
-      // Create sign-in record
-      const { data: signInRecord, error: signInError } = await supabase.from("sign_ins").insert({
-        visitor_id: visitor.id,
-        visitor_name: `${form.firstName} ${form.lastName}`,
-        visitor_email: form.email || null,
-        location_id: selectedLocation,
-        visitor_type_id: form.visitorTypeId || null,
-        host_id: form.hostId || null,
-        purpose: form.purpose || null,
-        badge_number: badgeNumber,
-      }).select().single()
+      // Get location timezone
+      const locationTimezone = currentLocation?.timezone || "UTC"
 
-      if (signInError) throw signInError
-
-      // Log visitor sign-in
-      await logAudit({
-        action: "visitor.sign_in",
-        entityType: "visitor",
-        entityId: visitor.id,
-        description: `Visitor signed in: ${form.firstName} ${form.lastName} (${form.email || "no email"})`,
-        metadata: {
+      // Create sign-in record via API to bypass RLS
+      const signInResponse = await fetch("/api/kiosk/sign-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           visitor_id: visitor.id,
-          sign_in_id: signInRecord?.id,
+          visitor_name: `${form.firstName} ${form.lastName}`,
+          visitor_email: form.email || null,
           location_id: selectedLocation,
+          visitor_type_id: form.visitorTypeId || null,
+          host_id: form.hostId || null,
           badge_number: badgeNumber,
-          company: form.company,
-          host_id: form.hostId
-        }
+          photo_url: photoUrl,
+          timezone: locationTimezone,
+        }),
       })
+
+      if (!signInResponse.ok) {
+        const errorData = await signInResponse.json()
+        throw new Error(errorData.error || "Failed to create sign-in record")
+      }
+
+      const { signIn: signInRecord } = await signInResponse.json()
 
       // Send host notification email if enabled and host is selected
       if (hostNotificationsEnabled && form.hostId) {
@@ -1885,26 +1890,23 @@ export default function KioskPage() {
         throw new Error("No active sign-in found for this email")
       }
 
-      // Update sign-out time
-      const { error: updateError } = await supabase
-        .from("sign_ins")
-        .update({ sign_out_time: new Date().toISOString() })
-        .eq("id", signIn.id)
-
-      if (updateError) throw updateError
-
-      // Log visitor sign-out via API to bypass RLS
-      await logAuditViaApi({
-        action: "visitor.sign_out",
-        entityType: "visitor",
-        entityId: signIn.visitor_id,
-        description: `Visitor signed out: ${signIn.visitor?.first_name} ${signIn.visitor?.last_name}`,
-        metadata: {
+      // Update sign-out time via API to bypass RLS
+      const signOutResponse = await fetch("/api/kiosk/sign-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           sign_in_id: signIn.id,
           visitor_id: signIn.visitor_id,
+          visitor_name: `${signIn.visitor?.first_name} ${signIn.visitor?.last_name}`,
+          visitor_email: signIn.visitor?.email || null,
           badge_number: signIn.badge_number
-        }
+        }),
       })
+
+      if (!signOutResponse.ok) {
+        const errorData = await signOutResponse.json()
+        throw new Error(errorData.error || "Failed to sign out")
+      }
 
       // Update any checked_in bookings for this visitor to completed
       await supabase
@@ -2199,7 +2201,6 @@ export default function KioskPage() {
           </div>
         </header>
       ) : (
-
         <header className="bg-background/80 backdrop-blur-sm border-b sticky top-0 z-50">
           <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-between gap-2">
             <div className="shrink-0">
@@ -2274,6 +2275,7 @@ export default function KioskPage() {
                   </SelectContent>
                 </Select>
               )}
+
               {/* Receptionist lock/logout button */}
               {receptionistUser && (
                 <Button
@@ -2291,6 +2293,7 @@ export default function KioskPage() {
           </div>
         </header>
       )}
+
       <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8">
         {mode === "receptionist-login" && (
           <div className="max-w-sm mx-auto mt-8 sm:mt-16">
@@ -2355,31 +2358,34 @@ export default function KioskPage() {
                           "Sign In"
                         )}
                       </Button>
+                      {microsoftSsoEnabled && (
+                        <>
+                          <div className="relative">
+                            <div className="absolute inset-0 flex items-center">
+                              <span className="w-full border-t" />
+                            </div>
+                            <div className="relative flex justify-center text-xs uppercase">
+                              <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                            </div>
+                          </div>
 
-                      <div className="relative">
-                        <div className="absolute inset-0 flex items-center">
-                          <span className="w-full border-t" />
-                        </div>
-                        <div className="relative flex justify-center text-xs uppercase">
-                          <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
-                        </div>
-                      </div>
-
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full bg-transparent"
-                        onClick={handleReceptionistMicrosoftLogin}
-                        disabled={receptionistLoading}
-                      >
-                        <svg className="mr-2 h-4 w-4" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <rect x="1" y="1" width="9" height="9" fill="#F25022" />
-                          <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
-                          <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
-                          <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
-                        </svg>
-                        Sign in with Microsoft
-                      </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full bg-transparent"
+                            onClick={handleReceptionistMicrosoftLogin}
+                            disabled={receptionistLoading}
+                          >
+                            <svg className="mr-2 h-4 w-4" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                              <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                              <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                              <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                            </svg>
+                            Sign in with Microsoft
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </form>
                 </CardContent>
@@ -2387,11 +2393,12 @@ export default function KioskPage() {
             )}
           </div>
         )}
+
         {mode === "home" && (
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-6 sm:mb-12">
               <h1 className="text-2xl sm:text-4xl font-bold text-foreground mb-2 sm:mb-3">Visitor Check-In</h1>
-              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName || "Gatekeeper.io"}. Please sign in or sign out below.</p>
+              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName || "Gaterkeeper.io"}. Please sign in or sign out below.</p>
             </div>
 
             {/* Visitor options - always shown */}
@@ -2454,7 +2461,7 @@ export default function KioskPage() {
             <div className="mt-4 sm:mt-8">
               {/* Employee Login/Sign Out Card - Show different state based on sign-in status */}
               {employeeSignedIn && currentEmployee ? (
-                <Card className="border-blue-200 bg-muted/50 mb-4 sm:mb-6">
+                <Card className="border-green-200 bg-green-50/50 mb-4 sm:mb-6">
                   <CardContent className="py-3 sm:py-4 px-3 sm:px-6">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 sm:gap-4">
@@ -2498,7 +2505,7 @@ export default function KioskPage() {
                         </div>
                         <div>
                           <h3 className="font-semibold text-sm sm:text-base">Employee Sign In</h3>
-                          <p className="text-xs sm:text-sm text-muted-foreground">{branding.companyName || "Gatekeeper.io"} employees sign in here</p>
+                          <p className="text-xs sm:text-sm text-muted-foreground">{branding.companyName || "Gaterkeeper.io"} employees sign in here</p>
                         </div>
                       </div>
                       <ArrowLeft className="w-5 h-5 text-muted-foreground rotate-180 shrink-0" />
@@ -2693,18 +2700,14 @@ export default function KioskPage() {
                   {error && <p className="text-sm text-destructive">{error}</p>}
 
                   <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
-                    {isLoading ? <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Continuing to Training...
-                    </>
-                      : selectedVisitorType?.requires_training ? (
-                        <>
-                          <PlayCircle className="w-4 h-4 mr-2" />
-                          Continue to Training
-                        </>
-                      ) : (
-                        "Complete Sign In"
-                      )}
+                    {isLoading ? "Processing..." : selectedVisitorType?.requires_training ? (
+                      <>
+                        <PlayCircle className="w-4 h-4 mr-2" />
+                        Continue to Training
+                      </>
+                    ) : (
+                      "Complete Sign In"
+                    )}
                   </Button>
                 </form>
               </CardContent>
@@ -2918,7 +2921,7 @@ export default function KioskPage() {
                   </div>
                   <div>
                     <CardTitle className="text-xl sm:text-2xl">Employee Sign In</CardTitle>
-                    <CardDescription className="text-xs sm:text-sm">Sign in with your {branding.companyName || "Gatekeeper.io"} credentials</CardDescription>
+                    <CardDescription className="text-xs sm:text-sm">Sign in with your {branding.companyName || "Gaterkeeper.io"} credentials</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -2932,7 +2935,7 @@ export default function KioskPage() {
                       required
                       value={employeeEmail}
                       onChange={(e) => setEmployeeEmail(e.target.value)}
-                      placeholder="you@company.com"
+                      placeholder="you@gaterkeeperio.com"
                     />
                   </div>
 
@@ -2999,31 +3002,35 @@ export default function KioskPage() {
                     )}
                   </Button>
 
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t" />
-                    </div>
-                    <div className="relative flex justify-center text-xs uppercase">
-                      <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
-                    </div>
-                  </div>
+                  {microsoftSsoEnabled && (
+                    <>
+                      <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                          <span className="w-full border-t" />
+                        </div>
+                        <div className="relative flex justify-center text-xs uppercase">
+                          <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                        </div>
+                      </div>
 
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full bg-transparent"
-                    size="lg"
-                    onClick={handleEmployeeMicrosoftLogin}
-                    disabled={isLoading}
-                  >
-                    <svg className="mr-2 h-5 w-5" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
-                      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
-                      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
-                      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
-                    </svg>
-                    Sign in with Microsoft
-                  </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full bg-transparent"
+                        size="lg"
+                        onClick={handleEmployeeMicrosoftLogin}
+                        disabled={isLoading}
+                      >
+                        <svg className="mr-2 h-5 w-5" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                          <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                          <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                          <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                        </svg>
+                        Sign in with Microsoft
+                      </Button>
+                    </>
+                  )}
                 </form>
               </CardContent>
             </Card>

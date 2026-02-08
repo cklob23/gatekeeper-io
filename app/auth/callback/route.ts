@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
   if (code) {
     const cookieStore = await cookies()
-
+    
     // Track cookies that need to be set on the response
     const cookiesToSet: { name: string; value: string; options: Record<string, unknown> }[] = []
 
@@ -61,12 +61,12 @@ export async function GET(request: Request) {
     // Helper function to create redirect with all session cookies
     function createRedirectWithCookies(url: string): NextResponse {
       const response = NextResponse.redirect(url)
-
+      
       // Apply all cookies that Supabase wants to set to the redirect response
       for (const { name, value, options } of cookiesToSet) {
         response.cookies.set(name, value, options)
       }
-
+      
       return response
     }
 
@@ -94,7 +94,7 @@ export async function GET(request: Request) {
             auto_signed_in: false,
             device_id: "Microsoft OAuth",
           })
-
+          
           // Log employee sign-in
           await logAuditServer({
             supabase,
@@ -166,7 +166,29 @@ export async function GET(request: Request) {
             metadata: { method: "microsoft_oauth", portal: "kiosk", email: profile.email, role: profile.role }
           })
 
-          return createRedirectWithCookies(getRedirectUrl("/kiosk"))
+          // Set the separate receptionist session cookie (independent of Supabase auth)
+          const receptionistSession = {
+            id: profile.id,
+            email: profile.email || data.user.email || "",
+            name: profile.full_name || profile.email || "",
+            role: profile.role || "staff",
+            loginAt: new Date().toISOString(),
+          }
+          const encodedSession = Buffer.from(JSON.stringify(receptionistSession)).toString("base64")
+
+          const redirectResponse = createRedirectWithCookies(getRedirectUrl("/kiosk"))
+          redirectResponse.cookies.set("kiosk-receptionist-session", encodedSession, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax" as const,
+            path: "/",
+            maxAge: 60 * 60 * 24, // 24 hours
+          })
+
+          // Sign out of Supabase auth so it doesn't interfere with admin sessions
+          await supabase.auth.signOut()
+
+          return redirectResponse
         }
 
         // No profile - redirect back with error
@@ -185,7 +207,7 @@ export async function GET(request: Request) {
         description: `Admin logged in via Microsoft: ${data.user.email}`,
         metadata: { method: "microsoft_oauth", portal: "admin" }
       })
-
+      
       // For admin login, redirect to admin dashboard
       return createRedirectWithCookies(getRedirectUrl(next))
     }

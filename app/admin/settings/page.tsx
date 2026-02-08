@@ -546,6 +546,20 @@ export default function SettingsPage() {
     setMicrosoftSsoError(null)
     setMicrosoftSsoSuccess(null)
 
+    // Client-side validation: cannot enable without client_id and secret
+    if (microsoftSso.microsoft_sso_enabled) {
+      if (!microsoftSso.azure_client_id.trim()) {
+        setMicrosoftSsoError("Application (Client) ID is required to enable Microsoft SSO.")
+        setSavingMicrosoftSso(false)
+        return
+      }
+      if (!microsoftSso.azure_client_secret || microsoftSso.azure_client_secret === "") {
+        setMicrosoftSsoError("Client Secret is required to enable Microsoft SSO.")
+        setSavingMicrosoftSso(false)
+        return
+      }
+    }
+
     try {
       const response = await fetch("/api/admin/microsoft-sso", {
         method: "POST",
