@@ -520,10 +520,10 @@ export default function SettingsPage() {
       }
       const data = await response.json()
 
-      // Extract tenant ID from the azure URL
+      // Extract tenant ID from the azure URL, with fallback to local settings
       // Format: https://login.microsoftonline.com/<tenant_id>/v2.0
-      let tenantId = ""
-      if (data.url) {
+      let tenantId = data.tenant_id || ""
+      if (!tenantId && data.url) {
         const match = data.url.match(/microsoftonline\.com\/([^/]+)/)
         if (match) tenantId = match[1]
       }
@@ -552,11 +552,13 @@ export default function SettingsPage() {
         setSavingMicrosoftSso(false)
         return
       }
-      if (!microsoftSso.azure_client_secret || microsoftSso.azure_client_secret === "") {
+      if (!microsoftSso.azure_client_secret || microsoftSso.azure_client_secret.trim() === "") {
         setMicrosoftSsoError("Client Secret is required to enable Microsoft SSO.")
         setSavingMicrosoftSso(false)
         return
       }
+      // The masked value means a secret already exists -- don't block save
+      // The API route will skip updating the secret if it's the masked placeholder
     }
 
     try {
