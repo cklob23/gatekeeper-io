@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label"
 import { AlertTriangle, CheckCircle, Siren, Download } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Evacuation, SignIn, EmployeeSignIn, Profile, Location } from "@/types/database"
+import { TierGate } from "@/components/admin/tier-gate"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { formatDateTime, formatFullDateTime } from "@/lib/timezone"
 import { logAudit } from "@/lib/audit-log"
@@ -224,10 +225,11 @@ export default function EvacuationsPage() {
   }
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Evacuations</h1>
+  <TierGate feature="emergencyEvacuations" label="Emergency Evacuations">
+  <div className="space-y-4 sm:space-y-6">
+  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+  <div>
+  <h1 className="text-2xl sm:text-3xl font-bold">Evacuations</h1>
           <p className="text-sm sm:text-base text-muted-foreground">Emergency evacuation management</p>
         </div>
         {activeEvacuation ? (
@@ -572,5 +574,6 @@ export default function EvacuationsPage() {
         </CardContent>
       </Card>
     </div>
+    </TierGate>
   )
 }

@@ -25,7 +25,7 @@
   --muted: oklch(0.95 0.01 240);
   --muted-foreground: oklch(0.5 0.02 240);
 
-  --accent: #d3e8f7;
+  --accent: oklch(92.004% 0.0304 238.956);
   --accent-foreground: oklch(0.28 0.04 240);
 
   /* Status */

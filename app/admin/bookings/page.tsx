@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/dialog"
 import { Plus, Calendar, CheckCircle, XCircle, Trash2, MapPin } from "lucide-react"
 import type { Booking, Host, VisitorType, Location } from "@/types/database"
+import { TierGate } from "@/components/admin/tier-gate"
+import { hasFeature } from "@/lib/tier"
 import { formatDateTime } from "@/lib/timezone"
 import { useTimezone } from "@/contexts/timezone-context"
 import { logAudit } from "@/lib/audit-log"
@@ -251,6 +253,7 @@ export default function BookingsPage() {
   }
 
   return (
+    <TierGate feature="visitorPreRegistration" label="Visitor Pre-Registration">
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -334,62 +337,62 @@ export default function BookingsPage() {
                   </Select>
                   <p className="text-xs text-muted-foreground">Host will be notified when visitor checks in</p>
                 </div>
-<div className="space-y-2">
-  <Label htmlFor="location">Location *</Label>
-  <Select value={form.locationId} onValueChange={(value) => setForm({ ...form, locationId: value })} required>
-  <SelectTrigger>
-  <SelectValue placeholder="Select location" />
-  </SelectTrigger>
-  <SelectContent>
-  {locations.map((location) => (
-  <SelectItem key={location.id} value={location.id}>
-  {location.name}
-  </SelectItem>
-  ))}
-  </SelectContent>
-  </Select>
-  <p className="text-xs text-muted-foreground">
-  {form.locationId && locations.find(l => l.id === form.locationId)?.timezone 
-    ? `Timezone: ${locations.find(l => l.id === form.locationId)?.timezone}`
-    : "Select a location to set timezone"}
-  </p>
-  </div>
-  <div className="space-y-2">
-  <Label htmlFor="type">Visitor Type</Label>
-  <Select
-  value={form.visitorTypeId}
-  onValueChange={(value) => setForm({ ...form, visitorTypeId: value })}
-  >
-  <SelectTrigger>
-  <SelectValue placeholder="Select type" />
-  </SelectTrigger>
-  <SelectContent>
-  {visitorTypes.map((type) => (
-  <SelectItem key={type.id} value={type.id}>
-  {type.name}
-  </SelectItem>
-  ))}
-  </SelectContent>
-  </Select>
-  </div>
-  <div className="space-y-2">
-  <Label htmlFor="arrival">
-  Expected Arrival
-  {form.locationId && locations.find(l => l.id === form.locationId)?.timezone && (
-    <span className="text-xs text-muted-foreground ml-1">
-      ({locations.find(l => l.id === form.locationId)?.timezone})
-    </span>
-  )}
-  </Label>
-  <Input
-  id="arrival"
-  type="datetime-local"
-  required
-  value={form.expectedArrival}
-  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-  setForm({ ...form, expectedArrival: e.target.value })
-  }
-  />
+                <div className="space-y-2">
+                  <Label htmlFor="location">Location *</Label>
+                  <Select value={form.locationId} onValueChange={(value) => setForm({ ...form, locationId: value })} required>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {locations.map((location) => (
+                        <SelectItem key={location.id} value={location.id}>
+                          {location.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {form.locationId && locations.find(l => l.id === form.locationId)?.timezone 
+                      ? `Timezone: ${locations.find(l => l.id === form.locationId)?.timezone}`
+                      : "Select a location to set timezone"}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="type">Visitor Type</Label>
+                  <Select
+                    value={form.visitorTypeId}
+                    onValueChange={(value) => setForm({ ...form, visitorTypeId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {visitorTypes.map((type) => (
+                        <SelectItem key={type.id} value={type.id}>
+                          {type.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="arrival">
+                    Expected Arrival
+                    {form.locationId && locations.find(l => l.id === form.locationId)?.timezone && (
+                      <span className="text-xs text-muted-foreground ml-1">
+                        ({locations.find(l => l.id === form.locationId)?.timezone})
+                      </span>
+                    )}
+                  </Label>
+                  <Input
+                    id="arrival"
+                    type="datetime-local"
+                    required
+                    value={form.expectedArrival}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setForm({ ...form, expectedArrival: e.target.value })
+                    }
+                  />
                 </div>
                 <DialogFooter>
                   <Button type="submit">Create Booking</Button>
@@ -559,5 +562,6 @@ export default function BookingsPage() {
         </CardContent>
       </Card>
     </div>
+    </TierGate>
   )
 }

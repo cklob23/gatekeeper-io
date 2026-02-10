@@ -11,6 +11,7 @@ import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, Pie, PieChar
 import { Download, Users, Briefcase, MapPin, Calendar, Clock, Building2, TrendingUp, LogOut, ClipboardList, ChevronRight } from "lucide-react"
 import Link from "next/link"
 import { formatFullDateTime } from "@/lib/timezone"
+import { TierGate } from "@/components/admin/tier-gate"
 
 interface ReportData {
   // Visitor metrics
@@ -489,10 +490,11 @@ export default function ReportsPage() {
   }, [period])
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Reports</h1>
+<TierGate feature="analyticsDashboard" label="Analytics Dashboard">
+<div className="space-y-4 sm:space-y-6">
+<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+<div>
+<h1 className="text-2xl sm:text-3xl font-bold">Reports</h1>
           <p className="text-sm sm:text-base text-muted-foreground">Sign-in analytics and insights</p>
         </div>
         <div className="flex items-center gap-2 sm:gap-4">
@@ -1003,5 +1005,6 @@ export default function ReportsPage() {
         <p className="text-center py-8 text-muted-foreground">No data available</p>
       )}
     </div>
+    </TierGate>
   )
 }

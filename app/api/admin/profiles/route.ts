@@ -13,16 +13,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Check if user has admin role
-    const { data: currentProfile } = await supabase
+    // Check if user has admin role and get their tenant_id (safe fallback if column doesn't exist yet)
+    let adminTenantId: string | null = null
+    const { data: cp1, error: cpErr } = await supabase
       .from("profiles")
-      .select("role")
+      .select("role, tenant_id")
       .eq("id", user.id)
       .single()
+    let currentProfile = cp1
+    if (cpErr?.code === "42703") {
+      const { data: cp2 } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single()
+      currentProfile = cp2 ? { ...cp2, tenant_id: null } : null
+    }
 
     if (!currentProfile || currentProfile.role !== "admin") {
       return NextResponse.json({ error: "Admin access required" }, { status: 403 })
     }
+
+    adminTenantId = (currentProfile as { tenant_id?: string | null }).tenant_id || null
 
     // Get profile data from request
     const body = await request.json()
@@ -92,6 +104,8 @@ export async function POST(request: NextRequest) {
         email_confirm: true, // Auto-confirm email since admin is creating
         user_metadata: {
           full_name: full_name || null,
+          role: role || "employee",
+          tenant_id: adminTenantId,
         },
       })
 
@@ -113,6 +127,7 @@ export async function POST(request: NextRequest) {
         location_id: location_id || null,
         department: department || null,
         avatar_url: avatar_url || null,
+        tenant_id: adminTenantId,
       })
       .select()
       .single()

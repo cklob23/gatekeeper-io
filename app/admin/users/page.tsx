@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import type React from "react"
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { hasFeature } from "@/lib/tier"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -527,6 +528,7 @@ export default function UsersPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {hasFeature("ssoIntegration") && (
           <Button
             variant="outline"
             size="sm"
@@ -542,6 +544,7 @@ export default function UsersPage() {
             )}
             Sync from Azure AD
           </Button>
+          )}
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreateDialog} size="sm" className="w-fit">
