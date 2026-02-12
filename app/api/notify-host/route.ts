@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server"
 import nodemailer from "nodemailer"
-import { createClient } from "@/lib/supabase/server"
+import { getAdminClient } from "@/lib/supabase/server"
 
 // Get SMTP settings from database or environment variables
+// Uses admin client to bypass RLS since this is called from the kiosk
+// where the visitor may not have an authenticated session
 async function getSmtpSettings() {
-  const supabase = await createClient()
+  const supabase = getAdminClient()
   const { data } = await supabase
     .from("settings")
     .select("key, value")
@@ -112,7 +114,7 @@ export async function POST(request: Request) {
                 <table width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; width: 100%;">
                   <!-- Header -->
                   <tr>
-                    <td style="background-color: ${isTraining ? "#d97706" : "#054e80"}; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+                    <td style="background-color: ${isTraining ? "#d97706" : "#059669"}; padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
                       ${companyLogo ? `<img src="${companyLogo}" alt="${companyName}" style="max-height: 50px; margin-bottom: 15px;" />` : ""}
                       <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">${emailTitle}</h1>
                     </td>
@@ -127,7 +129,7 @@ export async function POST(request: Request) {
                       <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
                         <tr>
                           <td style="padding: 20px;">
-                            <h3 style="margin: 0 0 15px 0; color: #054e80; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">Visitor Details</h3>
+                            <h3 style="margin: 0 0 15px 0; color: #059669; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">Visitor Details</h3>
                             <table width="100%" cellpadding="0" cellspacing="0">
                               ${visitorPhotoUrl ? `
                               <tr>

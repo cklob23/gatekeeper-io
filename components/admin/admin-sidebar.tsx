@@ -54,7 +54,7 @@ const navItems = [
   { href: "/admin/hosts", label: "Hosts", icon: UserCog },
   { href: "/admin/users", label: "User Management", icon: UsersRound },
   { href: "/admin/locations", label: "Locations", icon: Building2 },
-  { href: "/admin/audit-log", label: "Audit Log", icon: ScrollText, requiredFeature: "advancedAuditLogs", requiredTierLabel: "Add-on" },
+  { href: "/admin/audit-log", label: "Audit Log", icon: ScrollText },
   { href: "/admin/settings", label: "Settings", icon: Settings },
 ]
 

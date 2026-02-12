@@ -23,8 +23,6 @@ import {
 } from "@/components/ui/dialog"
 import { Plus, Calendar, CheckCircle, XCircle, Trash2, MapPin } from "lucide-react"
 import type { Booking, Host, VisitorType, Location } from "@/types/database"
-import { TierGate } from "@/components/admin/tier-gate"
-import { hasFeature } from "@/lib/tier"
 import { formatDateTime } from "@/lib/timezone"
 import { useTimezone } from "@/contexts/timezone-context"
 import { logAudit } from "@/lib/audit-log"
@@ -90,19 +88,19 @@ export default function BookingsPage() {
 
   async function handleCreateBooking(e: React.FormEvent) {
     e.preventDefault()
-    
+
     // Validate host is selected
     if (!form.hostId) {
       alert("Please select a host for the booking")
       return
     }
-    
+
     // Validate location is selected
     if (!form.locationId) {
       alert("Please select a location for the booking")
       return
     }
-    
+
     const supabase = createClient()
 
     // Get selected location's timezone
@@ -125,7 +123,7 @@ export default function BookingsPage() {
       purpose: form.purpose || null,
       location_id: form.locationId,
     }).select().single()
-    
+
     await logAudit({
       action: "booking.created",
       entityType: "booking",
@@ -148,15 +146,15 @@ export default function BookingsPage() {
     setIsDialogOpen(false)
     loadData()
   }
-  
+
   // Convert local datetime string to UTC ISO string based on timezone
   function convertLocalToUTC(localDatetime: string, timezone: string): string {
     if (!localDatetime) return new Date().toISOString()
-    
+
     try {
       // Create a date in the local timezone
       const date = new Date(localDatetime)
-      
+
       // Get the offset for the target timezone
       const formatter = new Intl.DateTimeFormat("en-US", {
         timeZone: timezone,
@@ -168,7 +166,7 @@ export default function BookingsPage() {
         second: "2-digit",
         hour12: false,
       })
-      
+
       // The input is already in the location's local time (from datetime-local input)
       // So we just need to store it as UTC
       return date.toISOString()
@@ -180,7 +178,7 @@ export default function BookingsPage() {
   async function updateBookingStatus(id: string, status: "completed" | "cancelled") {
     const supabase = createClient()
     await supabase.from("bookings").update({ status }).eq("id", id)
-    
+
     const action = status === "completed" ? "booking.checked_in" : "booking.cancelled"
     await logAudit({
       action,
@@ -189,18 +187,18 @@ export default function BookingsPage() {
       description: `Booking ${status}`,
       metadata: { status }
     })
-    
+
     loadData()
   }
 
   async function deleteSelectedBookings() {
     if (selectedIds.size === 0) return
     if (!confirm(`Are you sure you want to delete ${selectedIds.size} booking(s)? This action cannot be undone.`)) return
-    
+
     const supabase = createClient()
     const idsToDelete = Array.from(selectedIds)
     await supabase.from("bookings").delete().in("id", idsToDelete)
-    
+
     // Log each deletion
     for (const id of idsToDelete) {
       await logAudit({
@@ -210,7 +208,7 @@ export default function BookingsPage() {
         description: `Booking deleted`,
       })
     }
-    
+
     setSelectedIds(new Set())
     loadData()
   }
@@ -253,7 +251,6 @@ export default function BookingsPage() {
   }
 
   return (
-    <TierGate feature="visitorPreRegistration" label="Visitor Pre-Registration">
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -352,7 +349,7 @@ export default function BookingsPage() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    {form.locationId && locations.find(l => l.id === form.locationId)?.timezone 
+                    {form.locationId && locations.find(l => l.id === form.locationId)?.timezone
                       ? `Timezone: ${locations.find(l => l.id === form.locationId)?.timezone}`
                       : "Select a location to set timezone"}
                   </p>
@@ -562,6 +559,5 @@ export default function BookingsPage() {
         </CardContent>
       </Card>
     </div>
-    </TierGate>
   )
 }

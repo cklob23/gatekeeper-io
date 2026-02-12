@@ -808,7 +808,7 @@ export default function SettingsPage() {
     setEditingType(null)
     setForm({
       name: "",
-      badgeColor: "#10B981",
+      badgeColor: "#005b9e",
       requiresHost: true,
       requiresCompany: false,
       requiresTraining: false,
@@ -896,9 +896,9 @@ export default function SettingsPage() {
           <h1 className="text-2xl sm:text-3xl font-bold">Settings</h1>
           <p className="text-sm sm:text-base text-muted-foreground">Configure visitor management settings</p>
         </div>
-        <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground">
+        {/* <span className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground">
           {getTierName()} plan
-        </span>
+        </span> */}
       </div>
 
       <Card>

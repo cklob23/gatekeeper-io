@@ -18,91 +18,42 @@ function getAdminClient() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { first_name, last_name, email, phone, company, photo_url } = body
+    const { visitor_id, visitor_type_id, expires_at } = body
 
-    if (!first_name || !last_name) {
+    if (!visitor_id || !visitor_type_id) {
       return NextResponse.json(
-        { error: "Missing required fields: first_name and last_name" },
+        { error: "Missing required fields: visitor_id and visitor_type_id" },
         { status: 400 }
       )
     }
 
     const adminClient = getAdminClient()
 
-    // Create the visitor record
-    const { data: visitor, error: visitorError } = await adminClient
-      .from("visitors")
+    // Create the training completion record
+    const { data: completion, error: completionError } = await adminClient
+      .from("training_completions")
       .insert({
-        first_name,
-        last_name,
-        email: email || null,
-        phone: phone || null,
-        company: company || null,
-        photo_url: photo_url || null,
+        visitor_id,
+        visitor_type_id,
+        expires_at: expires_at || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
       })
       .select()
       .single()
 
-    if (visitorError) {
-      console.error("[API] Visitor insert error:", visitorError)
+    if (completionError) {
+      console.error("[API] Training completion insert error:", completionError)
       return NextResponse.json(
-        { error: visitorError.message },
+        { error: completionError.message },
         { status: 500 }
       )
     }
 
     return NextResponse.json({ 
       success: true, 
-      visitor 
+      completion 
     })
   } catch (error) {
-    console.error("[API] Create visitor error:", error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Internal server error" },
-      { status: 500 }
-    )
-  }
-}
-
-// Update visitor (for photo, etc.)
-export async function PUT(request: Request) {
-  try {
-    const body = await request.json()
-    const { id, photo_url } = body
-
-    if (!id) {
-      return NextResponse.json(
-        { error: "Missing required field: id" },
-        { status: 400 }
-      )
-    }
-
-    const adminClient = getAdminClient()
-
-    const updateData: Record<string, string | null> = {}
-    if (photo_url !== undefined) updateData.photo_url = photo_url
-
-    const { data: visitor, error: updateError } = await adminClient
-      .from("visitors")
-      .update(updateData)
-      .eq("id", id)
-      .select()
-      .single()
-
-    if (updateError) {
-      console.error("[API] Visitor update error:", updateError)
-      return NextResponse.json(
-        { error: updateError.message },
-        { status: 500 }
-      )
-    }
-
-    return NextResponse.json({ 
-      success: true, 
-      visitor 
-    })
-  } catch (error) {
-    console.error("[API] Update visitor error:", error)
+    console.error("[API] Create training completion error:", error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Internal server error" },
       { status: 500 }

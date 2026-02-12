@@ -419,34 +419,33 @@ export default function KioskPage() {
     }
   }, [searchParams, router])
 
-  // Load settings from database based on selected location
+  // Load settings via API (bypasses RLS since kiosk has no Supabase auth session)
   useEffect(() => {
     async function loadSettings() {
       if (!selectedLocation) return
 
-      const supabase = createClient()
-      const { data } = await supabase
-        .from("settings")
-        .select("key, value")
-        .eq("location_id", selectedLocation)
+      try {
+        const res = await fetch(`/api/kiosk/settings?location_id=${encodeURIComponent(selectedLocation)}`)
+        if (!res.ok) return
 
-      // Reset to defaults first
-      setUseMiles(false)
-      setHostNotificationsEnabled(true)
-      setBadgePrintingEnabled(false)
+        const { settings: merged } = await res.json()
 
-      if (data && data.length > 0) {
-        for (const setting of data) {
-          if (setting.key === "distance_unit_miles") {
-            setUseMiles(setting.value === true || setting.value === "true")
-          }
-          if (setting.key === "host_notifications") {
-            setHostNotificationsEnabled(setting.value === true || setting.value === "true")
-          }
-          if (setting.key === "badge_printing") {
-            setBadgePrintingEnabled(setting.value === true || setting.value === "true")
-          }
+        // Reset to defaults first
+        setUseMiles(false)
+        setHostNotificationsEnabled(true)
+        setBadgePrintingEnabled(false)
+
+        if (merged.distance_unit_miles !== undefined) {
+          setUseMiles(merged.distance_unit_miles === true || merged.distance_unit_miles === "true")
         }
+        if (merged.host_notifications !== undefined) {
+          setHostNotificationsEnabled(merged.host_notifications === true || merged.host_notifications === "true")
+        }
+        if (merged.badge_printing !== undefined) {
+          setBadgePrintingEnabled(merged.badge_printing === true || merged.badge_printing === "true")
+        }
+      } catch (err) {
+        console.error("Failed to load kiosk settings:", err)
       }
     }
     loadSettings()
@@ -535,7 +534,7 @@ export default function KioskPage() {
         // Using OpenStreetMap's Nominatim API for reverse geocoding (free, no API key needed)
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userCoords?.lat}&lon=${userCoords?.lng}&zoom=10`,
-          { headers: { "User-Agent": `${branding?.companyLogo.replace(/[\s.-]+/g, "") || "Gatekeeperio"}SignIn/1.0` } }
+          { headers: { "User-Agent": "GatekeeperioSignIn/1.0" } }
         )
 
         if (response.ok) {
@@ -1414,7 +1413,7 @@ export default function KioskPage() {
     setVideoStarted(true)
 
     // Simulate 47.39 minutes of required watching time
-    const totalDuration = 2843.4
+    const totalDuration = 60 * 3.46
     let elapsed = 0
 
     videoTimerRef.current = setInterval(() => {
@@ -1921,36 +1920,20 @@ export default function KioskPage() {
     setError(null)
 
     try {
-      const supabase = createClient()
+      // Look up active sign-in via API (bypasses RLS)
+      const findRes = await fetch("/api/kiosk/find-sign-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: signOutEmail }),
+      })
 
-      // First, find visitor(s) with this email
-      const { data: visitors, error: visitorError } = await supabase
-        .from("visitors")
-        .select("id, first_name, last_name")
-        .eq("email", signOutEmail.toLowerCase().trim())
+      const findData = await findRes.json()
 
-      if (visitorError) throw visitorError
-
-      if (!visitors || visitors.length === 0) {
-        throw new Error("No active sign-in found for this email")
+      if (!findRes.ok || !findData.sign_in) {
+        throw new Error(findData.error || "No active sign-in found for this email")
       }
 
-      // Get all visitor IDs
-      const visitorIds = visitors.map((v) => v.id)
-
-      // Find active sign-in for any of these visitors
-      const { data: signIn, error: findError } = await supabase
-        .from("sign_ins")
-        .select("*, visitor:visitors(*)")
-        .in("visitor_id", visitorIds)
-        .is("sign_out_time", null)
-        .order("sign_in_time", { ascending: false })
-        .limit(1)
-        .single()
-
-      if (findError || !signIn) {
-        throw new Error("No active sign-in found for this email")
-      }
+      const signIn = findData.sign_in
 
       // Update sign-out time via API to bypass RLS
       const signOutResponse = await fetch("/api/kiosk/sign-out", {
@@ -1959,8 +1942,8 @@ export default function KioskPage() {
         body: JSON.stringify({
           sign_in_id: signIn.id,
           visitor_id: signIn.visitor_id,
-          visitor_name: `${signIn.visitor?.first_name} ${signIn.visitor?.last_name}`,
-          visitor_email: signIn.visitor?.email || null,
+          visitor_name: signIn.visitor_name,
+          visitor_email: signIn.visitor_email,
           badge_number: signIn.badge_number,
         }),
       })
@@ -1970,15 +1953,15 @@ export default function KioskPage() {
         throw new Error(errorData.error || "Failed to sign out")
       }
 
-      // Update any checked_in bookings for this visitor to completed
-      await supabase
-        .from("bookings")
-        .update({ status: "completed" })
-        .eq("visitor_email", signOutEmail.toLowerCase().trim())
-        .eq("status", "checked_in")
+      // Update any checked_in bookings for this visitor to completed via API
+      await fetch("/api/kiosk/complete-bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visitor_email: signOutEmail.toLowerCase().trim() }),
+      })
 
       setSuccessData({
-        name: `${signIn.visitor?.first_name} ${signIn.visitor?.last_name}`,
+        name: signIn.visitor_name || "",
         badge: signIn.badge_number || "",
         type: "out",
       })
@@ -2465,7 +2448,7 @@ export default function KioskPage() {
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-6 sm:mb-12">
               <h1 className="text-2xl sm:text-4xl font-bold text-foreground mb-2 sm:mb-3">Visitor Check-In</h1>
-              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding?.companyLogo || "Gatekeeper.io"}. Please sign in or sign out below.</p>
+              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName || "Gatekeeper.io"}. Please sign in or sign out below.</p>
             </div>
 
             {/* Visitor options - always shown */}
@@ -2574,7 +2557,7 @@ export default function KioskPage() {
                         </div>
                         <div>
                           <h3 className="font-semibold text-sm sm:text-base">Employee Sign In</h3>
-                          <p className="text-xs sm:text-sm text-muted-foreground">{branding?.companyLogo || "Gatekeeper.io"} employees sign in here</p>
+                          <p className="text-xs sm:text-sm text-muted-foreground">{branding.companyName || "Gatekeeper.io"} employees sign in here</p>
                         </div>
                       </div>
                       <ArrowLeft className="w-5 h-5 text-muted-foreground rotate-180 shrink-0" />
@@ -3068,7 +3051,7 @@ export default function KioskPage() {
                   </div>
                   <div>
                     <CardTitle className="text-xl sm:text-2xl">Employee Sign In</CardTitle>
-                    <CardDescription className="text-xs sm:text-sm">Sign in with your {branding?.companyLogo || "Gatekeeper.io"} credentials</CardDescription>
+                    <CardDescription className="text-xs sm:text-sm">Sign in with your {branding.companyName || "Gatekeeper.io"} credentials</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -3082,8 +3065,7 @@ export default function KioskPage() {
                       required
                       value={employeeEmail}
                       onChange={(e) => setEmployeeEmail(e.target.value)}
-                      placeholder="you@gatekeeperio.com"
-                    />
+                      placeholder={`you@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "gatekeeper"}.com`}                    />
                   </div>
 
                   <div className="space-y-2">
@@ -3372,7 +3354,7 @@ export default function KioskPage() {
                       />
                       <label htmlFor="acknowledge" className="text-sm leading-relaxed cursor-pointer">
                         I confirm that I have watched and understood the safety training video. I agree to follow
-                        all safety guidelines and procedures while on {branding?.companyLogo || "Gatekeeper.io"} premises. I understand that failure
+                        all safety guidelines and procedures while on {branding.companyName || "Gatekeeper.io"} premises. I understand that failure
                         to comply may result in being asked to leave the facility.
                       </label>
                     </div>
@@ -3552,7 +3534,7 @@ export default function KioskPage() {
                 <p className="text-xs sm:text-sm text-muted-foreground mb-4 sm:mb-6">
                   {successData.type === "in"
                     ? "Please collect your visitor badge from reception."
-                    : `Thank you for visiting ${branding?.companyLogo || "Gatekeeper.io"}.`}
+                    : `Thank you for visiting ${branding.companyName || "Gatekeeper.io"}.`}
                 </p>
 
                 <Button onClick={handleReset} size="lg" className="w-full">

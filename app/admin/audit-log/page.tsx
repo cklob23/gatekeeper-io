@@ -14,7 +14,6 @@ import { addDays, subDays, format, startOfDay, endOfDay } from "date-fns"
 import type { AuditLog, Profile } from "@/types/database"
 import { formatDateTime, formatFullDateTime } from "@/lib/timezone"
 import { useTimezone } from "@/contexts/timezone-context"
-import { TierGate } from "@/components/admin/tier-gate"
 
 const ACTION_LABELS: Record<string, string> = {
   // User actions
@@ -229,11 +228,10 @@ export default function AuditLogPage() {
   }
 
   return (
-  <TierGate feature="advancedAuditLogs" label="Advanced Audit Logs">
-  <div className="space-y-4 sm:space-y-6">
-  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-  <div>
-  <h1 className="text-2xl sm:text-3xl font-bold">Audit log</h1>
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold">Audit log</h1>
           <p className="text-sm sm:text-base text-muted-foreground">Track all actions performed in the system</p>
         </div>
         <div className="flex items-center gap-2">
@@ -459,6 +457,5 @@ export default function AuditLogPage() {
         </CardContent>
       </Card>
     </div>
-    </TierGate>
   )
 }
