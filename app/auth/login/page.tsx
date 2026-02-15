@@ -14,6 +14,7 @@ import { Logo } from "@/components/logo"
 import { useBranding } from "@/hooks/use-branding"
 import { logAudit } from "@/lib/audit-log"
 import { loadPasswordPolicy, isPasswordExpired, needsReauthentication } from "@/lib/password-policy"
+import { hasFeature } from "@/lib/tier"
 
 export default function LoginPage() {
   const { branding } = useBranding()
@@ -21,14 +22,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isRedirecting, setIsRedirecting] = useState(false)
   const [microsoftSsoEnabled, setMicrosoftSsoEnabled] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
-    fetch("/api/auth/microsoft-sso-status")
-      .then((res) => res.json())
-      .then((data) => setMicrosoftSsoEnabled(data.enabled === true))
-      .catch(() => setMicrosoftSsoEnabled(false))
+    if (hasFeature("ssoIntegration")) {
+      fetch("/api/auth/microsoft-sso-status")
+        .then((res) => res.json())
+        .then((data) => setMicrosoftSsoEnabled(data.enabled === true))
+        .catch(() => setMicrosoftSsoEnabled(false))
+    }
   }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -78,9 +82,11 @@ export default function LoginPage() {
         metadata: { method: "password", portal: "admin" }
       })
 
+      setIsRedirecting(true)
       router.push("/admin")
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
+      setIsRedirecting(false)
     } finally {
       setIsLoading(false)
     }
@@ -89,6 +95,7 @@ export default function LoginPage() {
   const handleMicrosoftLogin = async () => {
     const supabase = createClient()
     setIsLoading(true)
+    setIsRedirecting(true)
     setError(null)
 
     try {
@@ -114,7 +121,20 @@ export default function LoginPage() {
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
       setIsLoading(false)
+      setIsRedirecting(false)
     }
+  }
+
+  if (isRedirecting) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/30 flex flex-col items-center justify-center gap-4">
+        <Logo />
+        <div className="flex flex-col items-center gap-3 mt-6">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <p className="text-sm text-muted-foreground animate-pulse">Loading dashboard...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -140,7 +160,7 @@ export default function LoginPage() {
                     <Input
                       id="email"
                       type="email"
-                      placeholder={`admin@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "gatekeeper"}.com`}
+                      placeholder={`admin@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "talusag"}.com`}
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
