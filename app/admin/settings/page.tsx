@@ -866,6 +866,41 @@ export default function SettingsPage() {
   }
 
   // --- Scheduled Sync functions ---
+  const SCHEDULE_MS: Record<string, number> = {
+    "1h": 60 * 60 * 1000,
+    "6h": 6 * 60 * 60 * 1000,
+    "12h": 12 * 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "168h": 7 * 24 * 60 * 60 * 1000,
+  }
+
+  function getNextSyncTime(schedule: string, lastSync: string | null, startDate: string | null): string {
+    if (schedule === "off" || !SCHEDULE_MS[schedule]) return ""
+    const now = Date.now()
+
+    // If a start date is in the future, show that as the next sync
+    if (startDate) {
+      const startMs = new Date(startDate).getTime()
+      if (!Number.isNaN(startMs) && startMs > now) {
+        return new Date(startMs).toLocaleString()
+      }
+    }
+
+    // If never synced, it's due now
+    if (!lastSync) return "Due now (next cron run)"
+
+    // Calculate next based on last sync + interval
+    const lastMs = new Date(lastSync).getTime()
+    const interval = SCHEDULE_MS[schedule]
+    const nextMs = lastMs + interval
+
+    if (nextMs <= now) {
+      return "Due now (next cron run)"
+    }
+    return new Date(nextMs).toLocaleString()
+  }
+
+  // --- Scheduled Sync functions ---
   const SYNC_SCHEDULE_OPTIONS = [
     { value: "off", label: "Off" },
     { value: "1h", label: "Every hour" },
@@ -2475,8 +2510,8 @@ export default function SettingsPage() {
           <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0 space-y-6">
             {rampConfigResult && (
               <div className={`rounded-lg border p-3 text-sm ${rampConfigResult.success
-                  ? "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-400"
-                  : "border-destructive/50 bg-destructive/10 text-destructive"
+                ? "border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-400"
+                : "border-destructive/50 bg-destructive/10 text-destructive"
                 }`}>
                 {rampConfigResult.message}
               </div>
@@ -2658,11 +2693,9 @@ export default function SettingsPage() {
                   </div>
                 )}
 
-                {syncScheduleAzure !== "off" && syncStartAzure && (
+                {syncScheduleAzure !== "off" && (
                   <p className="text-xs text-muted-foreground pl-0 sm:pl-28">
-                    Next sync: {new Date(syncStartAzure) > new Date()
-                      ? new Date(syncStartAzure).toLocaleString()
-                      : "Due on next cron run"}
+                    Next sync: {getNextSyncTime(syncScheduleAzure, lastAzureSync, syncStartAzure)}
                   </p>
                 )}
 
@@ -2754,11 +2787,9 @@ export default function SettingsPage() {
                   </div>
                 )}
 
-                {syncScheduleRamp !== "off" && syncStartRamp && (
+                {syncScheduleRamp !== "off" && (
                   <p className="text-xs text-muted-foreground pl-0 sm:pl-28">
-                    Next sync: {new Date(syncStartRamp) > new Date()
-                      ? new Date(syncStartRamp).toLocaleString()
-                      : "Due on next cron run"}
+                    Next sync: {getNextSyncTime(syncScheduleRamp, lastRampSync, syncStartRamp)}
                   </p>
                 )}
 
@@ -2817,10 +2848,10 @@ export default function SettingsPage() {
                   <div
                     key={`${log.time}-${i}`}
                     className={`flex gap-2 items-start px-2 py-1 rounded ${log.status === "failed"
-                        ? "bg-destructive/10 text-destructive"
-                        : log.status === "completed"
-                          ? "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400"
-                          : "bg-muted text-muted-foreground"
+                      ? "bg-destructive/10 text-destructive"
+                      : log.status === "completed"
+                        ? "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400"
+                        : "bg-muted text-muted-foreground"
                       }`}
                   >
                     <span className="shrink-0 tabular-nums">
