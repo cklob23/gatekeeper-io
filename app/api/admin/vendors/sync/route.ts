@@ -1,112 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAdminClient } from "@/lib/supabase/server"
-
-// Use RAMP_API_BASE env var for flexibility (production vs sandbox)
-const RAMP_API_BASE =
-  process.env.RAMP_API_BASE || "https://api.ramp.com/developer/v1"
-
-/**
- * Obtain a bearer token from Ramp using the OAuth2 client_credentials grant.
- *
- * Auth strategy (in priority order):
- * 1. RAMP_CLIENT_ID + RAMP_CLIENT_SECRET -> OAuth2 token exchange
- * 2. RAMP_API_TOKEN -> Direct bearer token (API key like rk_live_...)
- */
-async function getRampAccessToken(): Promise<string> {
-  // Strategy 1: Static API key / bearer token (simplest, most common)
-  const staticToken = process.env.RAMP_API_TOKEN
-  if (staticToken) return staticToken
-
-  // Strategy 2: OAuth2 client_credentials flow
-  const clientId = process.env.RAMP_CLIENT_ID
-  const clientSecret = process.env.RAMP_CLIENT_SECRET
-
-  if (clientId && clientSecret) {
-    const tokenUrl = `${RAMP_API_BASE}/token`
-
-    // Try both auth methods: form body params first, then Basic auth header
-    const attempts = [
-      // Attempt 1: credentials in form body
-      () =>
-        fetch(tokenUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            grant_type: "client_credentials",
-            scope: "vendors:read",
-            client_id: clientId,
-            client_secret: clientSecret,
-          }).toString(),
-        }),
-      // Attempt 2: credentials in Basic auth header
-      () =>
-        fetch(tokenUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
-          },
-          body: new URLSearchParams({
-            grant_type: "client_credentials",
-            scope: "vendors:read",
-          }).toString(),
-        }),
-    ]
-
-    let lastError = ""
-    for (const attempt of attempts) {
-      const response = await attempt()
-      const responseText = await response.text()
-
-      if (!response.ok) {
-        lastError = `Token request failed (${response.status}): ${responseText || "(empty response)"}`
-        continue
-      }
-
-      // Guard against empty response body
-      if (!responseText || responseText.trim().length === 0) {
-        lastError = `Token endpoint returned empty body (${response.status})`
-        continue
-      }
-
-      try {
-        const tokenData = JSON.parse(responseText)
-        if (tokenData.access_token) return tokenData.access_token
-        lastError = `Token response missing access_token: ${responseText}`
-      } catch {
-        lastError = `Token response is not valid JSON: ${responseText.slice(0, 200)}`
-      }
-    }
-
-    throw new Error(`Ramp OAuth failed: ${lastError}`)
-  }
-
-  throw new Error(
-    "Ramp API credentials not configured. Set RAMP_API_TOKEN (recommended), or RAMP_CLIENT_ID + RAMP_CLIENT_SECRET for OAuth."
-  )
-}
-
-interface RampVendor {
-  id: string
-  name: string
-  name_legal?: string
-  is_active: boolean
-  country?: string
-  state?: string
-  description?: string
-  category_name?: string
-  [key: string]: unknown
-}
-
-interface RampPage {
-  next: string | null
-}
-
-interface RampVendorResponse {
-  data: RampVendor[]
-  page: RampPage
-}
+import { getRampAccessToken, fetchRampVendors } from "@/lib/sync/ramp"
 
 /**
  * GET - Preview vendors from Ramp before importing (like Azure AD user preview).
@@ -142,28 +37,14 @@ export async function GET() {
     }
 
     // Fetch all vendors from Ramp (paginated)
-    const allVendors: RampVendor[] = []
-    let nextUrl: string | null = `${RAMP_API_BASE}/vendors?page_size=100`
-
-    while (nextUrl) {
-      const response = await fetch(nextUrl, {
-        headers: {
-          Authorization: `Bearer ${rampToken}`,
-          Accept: "application/json",
-        },
-      })
-
-      if (!response.ok) {
-        const errText = await response.text()
-        return NextResponse.json(
-          { error: `Ramp API error: ${response.status} - ${errText}` },
-          { status: 502 }
-        )
-      }
-
-      const data: RampVendorResponse = await response.json()
-      allVendors.push(...data.data)
-      nextUrl = data.page?.next || null
+    let allVendors
+    try {
+      allVendors = await fetchRampVendors(rampToken)
+    } catch (fetchErr) {
+      return NextResponse.json(
+        { error: fetchErr instanceof Error ? fetchErr.message : "Failed to fetch vendors from Ramp" },
+        { status: 502 }
+      )
     }
 
     // Check which vendors already exist in our DB
@@ -238,9 +119,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No vendors provided" }, { status: 400 })
     }
 
+    // Query existing vendor ramp IDs to distinguish creates from updates
+    const incomingRampIds = selectedVendors.map(v => v.id).filter(Boolean)
+    const { data: existingVendorRows } = await adminClient
+      .from("vendors")
+      .select("ramp_vendor_id")
+      .in("ramp_vendor_id", incomingRampIds)
+
+    const existingIdSet = new Set(
+      (existingVendorRows || []).map((v: { ramp_vendor_id: string }) => v.ramp_vendor_id)
+    )
+
     // Batch upsert selected vendors (chunks of 100 for speed)
     const now = new Date().toISOString()
-    let upserted = 0
+    let createdCount = 0
+    let updatedCount = 0
     const errors: string[] = []
 
     const BATCH_SIZE = 100
@@ -257,7 +150,7 @@ export async function POST(request: Request) {
         synced_at: now,
       }))
 
-      const { error, count } = await adminClient
+      const { error } = await adminClient
         .from("vendors")
         .upsert(batch, { onConflict: "ramp_vendor_id", count: "exact" })
 
@@ -265,9 +158,17 @@ export async function POST(request: Request) {
         console.error(`Batch ${i / BATCH_SIZE + 1} error:`, error)
         errors.push(`Batch ${i / BATCH_SIZE + 1}: ${error.message}`)
       } else {
-        upserted += count || batch.length
+        for (const item of batch) {
+          if (existingIdSet.has(item.ramp_vendor_id)) {
+            updatedCount++
+          } else {
+            createdCount++
+          }
+        }
       }
     }
+
+    const upserted = createdCount + updatedCount
 
     if (errors.length > 0 && upserted === 0) {
       return NextResponse.json(
@@ -276,11 +177,34 @@ export async function POST(request: Request) {
       )
     }
 
+    // Update last sync timestamp for scheduled sync tracking
+    if (upserted > 0) {
+      const { data: existing } = await adminClient
+        .from("settings")
+        .select("id")
+        .eq("key", "last_ramp_sync")
+        .is("location_id", null)
+        .single()
+
+      if (existing) {
+        await adminClient
+          .from("settings")
+          .update({ value: new Date().toISOString() })
+          .eq("id", existing.id)
+      } else {
+        await adminClient
+          .from("settings")
+          .insert({ key: "last_ramp_sync", value: new Date().toISOString(), location_id: null })
+      }
+    }
+
     return NextResponse.json({
       success: true,
       synced: upserted,
+      created: createdCount,
+      updated: updatedCount,
       total_selected: selectedVendors.length,
-      ...(errors.length > 0 ? { warnings: errors } : {}),
+      errors: errors.length > 0 ? errors : undefined,
     })
   } catch (err) {
     console.error("Ramp import error:", err)

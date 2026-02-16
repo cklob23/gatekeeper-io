@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import type React from "react"
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { hasFeature } from "@/lib/tier"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,7 +23,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { Plus, Pencil, Trash2, UsersRound, RefreshCw, Cloud, Loader2, KeyRound, MoreHorizontal } from "lucide-react"
+import { Plus, Pencil, Trash2, UsersRound, RefreshCw, Cloud, Loader2, KeyRound, MoreHorizontal, Mail, Eye, EyeOff } from "lucide-react"
+import { SyncProgress, type SyncProgressData } from "@/components/admin/sync-progress"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,12 +36,15 @@ import {
 import type { Location, Host } from "@/types/database"
 import { AvatarUpload } from "@/components/admin/avatar-upload"
 import { logAudit } from "@/lib/audit-log"
+import type { Role } from "@/lib/permissions"
+import { Shield } from "lucide-react"
 
 interface Profile {
   id: string
   email: string | null
   full_name: string | null
   role: string | null
+  custom_role_id: string | null
   avatar_url: string | null
   location_id: string | null
   department: string | null
@@ -57,6 +62,7 @@ export default function UsersPage() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [locations, setLocations] = useState<Location[]>([])
   const [hosts, setHosts] = useState<Host[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
   const [lastSignInLocations, setLastSignInLocations] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -73,16 +79,24 @@ export default function UsersPage() {
     selected: boolean
   }>>([])
   const [isAzurePreviewOpen, setIsAzurePreviewOpen] = useState(false)
+  const [azureSyncProgress, setAzureSyncProgress] = useState<SyncProgressData | null>(null)
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
   const [isBulkActionOpen, setIsBulkActionOpen] = useState(false)
-  const [bulkAction, setBulkAction] = useState<"role" | "location" | "host" | null>(null)
+  const [bulkAction, setBulkAction] = useState<"role" | "location" | "host" | "delete" | null>(null)
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false)
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false)
   const [bulkValue, setBulkValue] = useState("")
   const [isPasswordResetDialogOpen, setIsPasswordResetDialogOpen] = useState(false)
   const [passwordResetUserId, setPasswordResetUserId] = useState<string | null>(null)
+  const [passwordResetMode, setPasswordResetMode] = useState<"email" | "temporary">("email")
+  const [temporaryPassword, setTemporaryPassword] = useState("")
+  const [showTempPassword, setShowTempPassword] = useState(false)
+  const [isResettingPassword, setIsResettingPassword] = useState(false)
   const [form, setForm] = useState({
     email: "",
     fullName: "",
     role: "employee",
+    customRoleId: "",
     locationId: "",
     department: "",
     avatarUrl: "",
@@ -93,17 +107,19 @@ export default function UsersPage() {
     setIsLoading(true)
     const supabase = createClient()
 
-    const [{ data: profilesData }, { data: locationsData }, { data: hostsData }, { data: signInsData }] = await Promise.all([
+    const [{ data: profilesData }, { data: locationsData }, { data: hostsData }, { data: signInsData }, { data: rolesData }] = await Promise.all([
       supabase.from("profiles").select("*").order("full_name"),
       supabase.from("locations").select("*").order("name"),
       supabase.from("hosts").select("*"),
       // Get the most recent sign-in for each user to determine their last location
       supabase.from("employee_sign_ins").select("profile_id, location_id, sign_in_time").order("sign_in_time", { ascending: false }),
+      supabase.from("roles").select("*").order("name"),
     ])
 
     if (profilesData) setProfiles(profilesData)
+    if (rolesData) setRoles(rolesData as Role[])
     if (hostsData) setHosts(hostsData)
-    
+
     // Build a map of profile_id -> last location_id (first occurrence is most recent due to ordering)
     if (signInsData) {
       const locationMap: Record<string, string> = {}
@@ -139,6 +155,7 @@ export default function UsersPage() {
       email: "",
       fullName: "",
       role: "employee",
+      customRoleId: "",
       locationId: locations[0]?.id || "",
       department: "",
       avatarUrl: "",
@@ -155,6 +172,7 @@ export default function UsersPage() {
       email: profile.email || "",
       fullName: profile.full_name || "",
       role: profile.role || "employee",
+      customRoleId: profile.custom_role_id || "",
       locationId: profile.location_id || locations[0]?.id || "",
       department: profile.department || "",
       avatarUrl: profile.avatar_url || "",
@@ -172,6 +190,7 @@ export default function UsersPage() {
         email: form.email || null,
         full_name: form.fullName || null,
         role: form.role,
+        custom_role_id: (form.role !== "admin" && form.customRoleId) ? form.customRoleId : null,
         location_id: form.locationId || null,
         department: form.department || null,
         avatar_url: form.avatarUrl || null,
@@ -184,7 +203,7 @@ export default function UsersPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: editingProfile.id, ...profileData }),
         })
-        
+
         if (!response.ok) {
           const result = await response.json()
           throw new Error(result.error || "Failed to update profile")
@@ -193,7 +212,7 @@ export default function UsersPage() {
         // Handle host status
         const supabase = createClient()
         const existingHost = hosts.find(h => h.profile_id === editingProfile.id || h.email?.toLowerCase() === editingProfile.email?.toLowerCase())
-        
+
         if (form.isHost && !existingHost) {
           // Create new host entry
           await supabase.from("hosts").insert({
@@ -216,7 +235,7 @@ export default function UsersPage() {
           // Remove host entry
           await supabase.from("hosts").delete().eq("id", existingHost.id)
         }
-        
+
         await logAudit({
           action: "user.updated",
           entityType: "user",
@@ -231,12 +250,12 @@ export default function UsersPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(profileData),
         })
-        
+
         if (!response.ok) {
           const result = await response.json()
           throw new Error(result.error || "Failed to create profile")
         }
-        
+
         const result = await response.json()
         await logAudit({
           action: "user.created",
@@ -261,26 +280,26 @@ export default function UsersPage() {
 
   async function handleDelete(id: string) {
     if (!confirm("Are you sure you want to delete this user profile? This action cannot be undone.")) return
-    
+
     const profileToDelete = profiles.find(p => p.id === id)
-    
+
     try {
       const response = await fetch(`/api/admin/profiles?id=${id}`, {
         method: "DELETE",
       })
-      
+
       if (!response.ok) {
         const result = await response.json()
         throw new Error(result.error || "Failed to delete profile")
       }
-      
+
       await logAudit({
         action: "user.deleted",
         entityType: "user",
         entityId: id,
         description: `Admin deleted user: ${profileToDelete?.full_name || profileToDelete?.email || id}`,
       })
-      
+
       loadData()
     } catch (error) {
       setSyncMessage({
@@ -334,38 +353,93 @@ export default function UsersPage() {
     setIsSyncing(true)
     setSyncMessage(null)
 
+    const progress: SyncProgressData = {
+      current: 0,
+      total: selectedUsers.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      errors: [],
+      status: "running",
+      label: "Importing users",
+    }
+    setAzureSyncProgress({ ...progress })
+
+    // Audit: sync started
+    await logAudit({
+      action: "sync.azure_started",
+      entityType: "sync",
+      description: `Azure AD user sync started: ${selectedUsers.length} users selected`,
+      metadata: { total: selectedUsers.length, trigger: "manual" },
+    })
+
+    const CHUNK_SIZE = 10
     try {
-      const response = await fetch("/api/admin/sync-azure-users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ users: selectedUsers }),
-      })
+      for (let i = 0; i < selectedUsers.length; i += CHUNK_SIZE) {
+        const chunk = selectedUsers.slice(i, i + CHUNK_SIZE)
 
-      const result = await response.json()
+        const response = await fetch("/api/admin/sync-azure-users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ users: chunk }),
+        })
 
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to import users")
+        const result = await response.json()
+
+        if (!response.ok) {
+          progress.errors.push(result.error || `Chunk ${Math.floor(i / CHUNK_SIZE) + 1} failed`)
+        } else {
+          progress.created += result.created || 0
+          progress.updated += result.updated || 0
+          progress.skipped += result.skipped || 0
+          if (result.errors) {
+            progress.errors.push(...result.errors)
+          }
+        }
+
+        progress.current = Math.min(i + chunk.length, selectedUsers.length)
+        setAzureSyncProgress({ ...progress })
       }
 
-      setSyncMessage({
-        type: "success",
-        text: `Successfully imported ${result.synced} users from Azure AD`,
+      progress.status = progress.errors.length > 0 && progress.created === 0 && progress.updated === 0 ? "failed" : "completed"
+      setAzureSyncProgress({ ...progress })
+
+      // Audit: sync completed
+      const summary = `Azure AD sync completed: ${progress.created} created, ${progress.updated} updated, ${progress.skipped} skipped, ${progress.errors.length} errors`
+      await logAudit({
+        action: progress.status === "failed" ? "sync.azure_failed" : "sync.azure_completed",
+        entityType: "sync",
+        description: summary,
+        metadata: {
+          created: progress.created,
+          updated: progress.updated,
+          skipped: progress.skipped,
+          errors: progress.errors.length,
+          total: selectedUsers.length,
+        },
       })
-      setIsAzurePreviewOpen(false)
-      setAzureUsers([])
-      loadData()
+
+      if (progress.status === "completed") {
+        setSyncMessage({ type: "success", text: summary })
+        // Auto-close after a delay so user can see the final summary
+        setTimeout(() => {
+          setIsAzurePreviewOpen(false)
+          setAzureUsers([])
+          setAzureSyncProgress(null)
+          loadData()
+        }, 2000)
+      }
     } catch (error) {
-      setSyncMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "Failed to import users from Azure AD",
-      })
+      progress.status = "failed"
+      progress.errors.push(error instanceof Error ? error.message : "Import failed")
+      setAzureSyncProgress({ ...progress })
     } finally {
       setIsSyncing(false)
     }
   }
 
   function toggleAzureUserSelection(id: string) {
-    setAzureUsers(users => users.map(u => 
+    setAzureUsers(users => users.map(u =>
       u.id === id ? { ...u, selected: !u.selected } : u
     ))
   }
@@ -374,12 +448,24 @@ export default function UsersPage() {
     setAzureUsers(users => users.map(u => ({ ...u, selected })))
   }
 
-  function getRoleBadge(role: string | null) {
+  function getRoleBadge(role: string | null, customRoleId?: string | null) {
     const roleConfig = ROLES.find((r) => r.value === role) || { label: role || "Unknown", color: "bg-gray-500" }
+
+    // If the user has a custom role assigned, show it alongside the base role
+    const customRole = customRoleId ? roles.find((r) => r.id === customRoleId) : null
+
     return (
-      <Badge className={`${roleConfig.color} text-white`}>
-        {roleConfig.label}
-      </Badge>
+      <div className="flex flex-wrap gap-1">
+        <Badge className={`${roleConfig.color} text-white`}>
+          {roleConfig.label}
+        </Badge>
+        {customRole && (
+          <Badge variant="outline" className="border-primary/50 text-primary gap-1">
+            <Shield className="w-2.5 h-2.5" />
+            {customRole.name}
+          </Badge>
+        )}
+      </div>
     )
   }
 
@@ -428,13 +514,13 @@ export default function UsersPage() {
 
   async function handleBulkAction() {
     if (!bulkAction || !bulkValue || selectedUserIds.size === 0) return
-    
+
     setIsLoading(true)
     const supabase = createClient()
-    
+
     try {
       const selectedProfiles = profiles.filter(p => selectedUserIds.has(p.id))
-      
+
       if (bulkAction === "role") {
         // Update roles via API
         for (const profile of selectedProfiles) {
@@ -460,7 +546,7 @@ export default function UsersPage() {
         const setAsHost = bulkValue === "true"
         for (const profile of selectedProfiles) {
           const existingHost = hosts.find(h => h.profile_id === profile.id || h.email?.toLowerCase() === profile.email?.toLowerCase())
-          
+
           if (setAsHost && !existingHost) {
             await supabase.from("hosts").insert({
               name: profile.full_name || profile.email,
@@ -476,7 +562,7 @@ export default function UsersPage() {
         }
         setSyncMessage({ type: "success", text: setAsHost ? `Added ${selectedProfiles.length} users as hosts` : `Removed ${selectedProfiles.length} users from hosts` })
       }
-      
+
       setSelectedUserIds(new Set())
       setIsBulkActionOpen(false)
       setBulkAction(null)
@@ -489,6 +575,51 @@ export default function UsersPage() {
     }
   }
 
+  async function handleBulkDelete() {
+    if (selectedUserIds.size === 0) return
+    setIsBulkDeleting(true)
+
+    const selectedProfiles = profiles.filter(p => selectedUserIds.has(p.id))
+    let deleted = 0
+    const errors: string[] = []
+
+    for (const profile of selectedProfiles) {
+      try {
+        const response = await fetch(`/api/admin/profiles?id=${profile.id}`, { method: "DELETE" })
+        if (!response.ok) {
+          const result = await response.json()
+          errors.push(`${profile.full_name || profile.email}: ${result.error || "Failed"}`)
+        } else {
+          deleted++
+        }
+      } catch {
+        errors.push(`${profile.full_name || profile.email}: Request failed`)
+      }
+    }
+
+    await logAudit({
+      action: "user.bulk_deleted",
+      entityType: "user",
+      description: `Bulk deleted ${deleted} users${errors.length ? `, ${errors.length} failed` : ""}`,
+      metadata: {
+        deleted,
+        failed: errors.length,
+        userNames: selectedProfiles.map(p => p.full_name || p.email).filter(Boolean),
+      },
+    })
+
+    setIsBulkDeleting(false)
+    setBulkDeleteConfirmOpen(false)
+    setSelectedUserIds(new Set())
+
+    if (errors.length > 0) {
+      setSyncMessage({ type: "error", text: `Deleted ${deleted} users. ${errors.length} failed: ${errors[0]}` })
+    } else {
+      setSyncMessage({ type: "success", text: `Successfully deleted ${deleted} users` })
+    }
+    loadData()
+  }
+
   async function handlePasswordReset(userId: string) {
     const profile = profiles.find(p => p.id === userId)
     if (!profile?.email) {
@@ -496,24 +627,52 @@ export default function UsersPage() {
       return
     }
 
-    try {
-      const response = await fetch("/api/admin/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, email: profile.email }),
-      })
+    setIsResettingPassword(true)
 
-      const result = await response.json()
-      
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to send password reset")
+    try {
+      if (passwordResetMode === "email") {
+        const response = await fetch("/api/admin/reset-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, email: profile.email }),
+        })
+
+        const result = await response.json()
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to send password reset")
+        }
+
+        setSyncMessage({ type: "success", text: `Password reset email sent to ${profile.email}` })
+      } else {
+        if (temporaryPassword.length < 8) {
+          setSyncMessage({ type: "error", text: "Password must be at least 8 characters" })
+          setIsResettingPassword(false)
+          return
+        }
+
+        const response = await fetch("/api/admin/set-temporary-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, email: profile.email, password: temporaryPassword }),
+        })
+
+        const result = await response.json()
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to set temporary password")
+        }
+
+        setSyncMessage({ type: "success", text: `Temporary password set for ${profile.full_name || profile.email}` })
       }
 
-      setSyncMessage({ type: "success", text: `Password reset email sent to ${profile.email}` })
       setIsPasswordResetDialogOpen(false)
       setPasswordResetUserId(null)
+      setTemporaryPassword("")
+      setShowTempPassword(false)
+      setPasswordResetMode("email")
     } catch (error) {
-      setSyncMessage({ type: "error", text: error instanceof Error ? error.message : "Failed to send password reset" })
+      setSyncMessage({ type: "error", text: error instanceof Error ? error.message : "Password reset failed" })
+    } finally {
+      setIsResettingPassword(false)
     }
   }
 
@@ -527,21 +686,23 @@ export default function UsersPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleFetchAzureUsers}
-            disabled={isSyncing || !microsoftSsoConfigured}
-            className="w-fit bg-transparent"
-            title={!microsoftSsoConfigured ? "Configure Microsoft SSO in Settings first" : undefined}
-          >
-            {isSyncing ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Cloud className="w-4 h-4 mr-2" />
-            )}
-            Sync from Azure AD
-          </Button>
+          {hasFeature("ssoIntegration") && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleFetchAzureUsers}
+              disabled={isSyncing || !microsoftSsoConfigured}
+              className="w-fit bg-transparent"
+              title={!microsoftSsoConfigured ? "Configure Microsoft SSO in Settings first" : undefined}
+            >
+              {isSyncing ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Cloud className="w-4 h-4 mr-2" />
+              )}
+              Sync from Azure AD
+            </Button>
+          )}
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreateDialog} size="sm" className="w-fit">
@@ -596,7 +757,7 @@ export default function UsersPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="role">Role *</Label>
-                  <Select value={form.role} onValueChange={(value) => setForm({ ...form, role: value })}>
+                  <Select value={form.role} onValueChange={(value) => setForm({ ...form, role: value, customRoleId: value === "admin" ? "" : form.customRoleId })}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -609,6 +770,38 @@ export default function UsersPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                {form.role !== "admin" && roles.length > 0 && (
+                  <div className="space-y-2">
+                    <Label htmlFor="customRole">
+                      Admin Access Role
+                    </Label>
+                    <Select
+                      value={form.customRoleId || "none"}
+                      onValueChange={(value) => setForm({ ...form, customRoleId: value === "none" ? "" : value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="No admin access" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No admin access</SelectItem>
+                        {roles.map((role) => (
+                          <SelectItem key={role.id} value={role.id}>
+                            {role.name}
+                            {role.is_system ? " (System)" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Assign a role to grant this user access to specific admin pages.
+                    </p>
+                  </div>
+                )}
+                {form.role === "admin" && (
+                  <p className="text-xs text-muted-foreground rounded-md bg-muted px-3 py-2">
+                    Admins have full access to all pages. Custom roles are not needed.
+                  </p>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="location">Location</Label>
                   <Select
@@ -691,91 +884,109 @@ export default function UsersPage() {
               Select which users you want to import. Users already in the system are unchecked by default.
             </DialogDescription>
           </DialogHeader>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">
-                {azureUsers.filter(u => u.selected).length} of {azureUsers.length} selected
-              </span>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => selectAllAzureUsers(true)} className="bg-transparent">
-                  Select All
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => selectAllAzureUsers(false)} className="bg-transparent">
-                  Deselect All
-                </Button>
+
+          {azureSyncProgress ? (
+            <div className="py-4">
+              <SyncProgress progress={azureSyncProgress} />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  {azureUsers.filter(u => u.selected).length} of {azureUsers.length} selected
+                </span>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => selectAllAzureUsers(true)} className="bg-transparent">
+                    Select All
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => selectAllAzureUsers(false)} className="bg-transparent">
+                    Deselect All
+                  </Button>
+                </div>
+              </div>
+
+              <div className="border rounded-lg max-h-[400px] overflow-y-auto">
+                {azureUsers.length === 0 ? (
+                  <p className="p-4 text-center text-muted-foreground">No users found in Azure AD</p>
+                ) : (
+                  <div className="divide-y">
+                    {azureUsers.map(user => {
+                      const existsInSystem = profiles.some(p =>
+                        p.email?.toLowerCase() === (user.mail?.toLowerCase() || user.userPrincipalName?.toLowerCase())
+                      )
+                      return (
+                        <div
+                          key={user.id}
+                          className={`flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer ${existsInSystem ? "opacity-60" : ""}`}
+                          onClick={() => toggleAzureUserSelection(user.id)}
+                        >
+                          <Checkbox
+                            checked={user.selected}
+                            onCheckedChange={() => toggleAzureUserSelection(user.id)}
+                          />
+                          <Avatar className="h-10 w-10">
+                            {user.photo ? (
+                              <AvatarImage src={user.photo || "/placeholder.svg"} />
+                            ) : null}
+                            <AvatarFallback>
+                              {user.displayName?.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">{user.displayName}</p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {user.mail || user.userPrincipalName}
+                            </p>
+                          </div>
+                          {existsInSystem && (
+                            <Badge variant="secondary" className="text-xs">Exists (will update)</Badge>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             </div>
-            
-            <div className="border rounded-lg max-h-[400px] overflow-y-auto">
-              {azureUsers.length === 0 ? (
-                <p className="p-4 text-center text-muted-foreground">No users found in Azure AD</p>
-              ) : (
-                <div className="divide-y">
-                  {azureUsers.map(user => {
-                    const existsInSystem = profiles.some(p => 
-                      p.email?.toLowerCase() === (user.mail?.toLowerCase() || user.userPrincipalName?.toLowerCase())
-                    )
-                    return (
-                      <div
-                        key={user.id}
-                        className={`flex items-center gap-3 p-3 hover:bg-muted/50 cursor-pointer ${existsInSystem ? "opacity-60" : ""}`}
-                        onClick={() => toggleAzureUserSelection(user.id)}
-                      >
-                        <Checkbox
-                          checked={user.selected}
-                          onCheckedChange={() => toggleAzureUserSelection(user.id)}
-                        />
-                        <Avatar className="h-10 w-10">
-                          {user.photo ? (
-                            <AvatarImage src={user.photo || "/placeholder.svg"} />
-                          ) : null}
-                          <AvatarFallback>
-                            {user.displayName?.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{user.displayName}</p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {user.mail || user.userPrincipalName}
-                          </p>
-                        </div>
-                        {existsInSystem && (
-                          <Badge variant="secondary" className="text-xs">Already exists</Badge>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-          
+          )}
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAzurePreviewOpen(false)} className="bg-transparent">
-              Cancel
-            </Button>
-            <Button onClick={handleImportSelectedUsers} disabled={isSyncing || azureUsers.filter(u => u.selected).length === 0}>
-              {isSyncing ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Importing...
-                </>
-              ) : (
-                `Import ${azureUsers.filter(u => u.selected).length} Users`
-              )}
-            </Button>
+            {azureSyncProgress?.status === "completed" || azureSyncProgress?.status === "failed" ? (
+              <Button onClick={() => {
+                setIsAzurePreviewOpen(false)
+                setAzureUsers([])
+                setAzureSyncProgress(null)
+                if (azureSyncProgress.status === "completed") loadData()
+              }}>
+                Close
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => { setIsAzurePreviewOpen(false); setAzureSyncProgress(null) }} className="bg-transparent" disabled={isSyncing}>
+                  Cancel
+                </Button>
+                <Button onClick={handleImportSelectedUsers} disabled={isSyncing || azureUsers.filter(u => u.selected).length === 0}>
+                  {isSyncing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    `Import ${azureUsers.filter(u => u.selected).length} Users`
+                  )}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {syncMessage && (
         <div
-          className={`p-4 rounded-lg ${
-            syncMessage.type === "success"
+          className={`p-4 rounded-lg ${syncMessage.type === "success"
               ? "bg-green-50 text-green-800 border border-green-200"
               : "bg-red-50 text-red-800 border border-red-200"
-          }`}
+            }`}
         >
           {syncMessage.text}
         </div>
@@ -804,7 +1015,7 @@ export default function UsersPage() {
                 </SelectContent>
               </Select>
             </div>
-            
+
             {bulkAction === "role" && (
               <div className="space-y-2">
                 <Label>New Role</Label>
@@ -820,7 +1031,7 @@ export default function UsersPage() {
                 </Select>
               </div>
             )}
-            
+
             {bulkAction === "location" && (
               <div className="space-y-2">
                 <Label>New Location</Label>
@@ -836,7 +1047,7 @@ export default function UsersPage() {
                 </Select>
               </div>
             )}
-            
+
             {bulkAction === "host" && (
               <div className="space-y-2">
                 <Label>Host Status</Label>
@@ -862,24 +1073,141 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Bulk Delete Confirmation Dialog */}
+      <Dialog open={bulkDeleteConfirmOpen} onOpenChange={setBulkDeleteConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Delete {selectedUserIds.size} Users</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. The following users will be permanently deleted:
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[200px] overflow-y-auto border rounded-lg divide-y">
+            {profiles.filter(p => selectedUserIds.has(p.id)).map(p => (
+              <div key={p.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                <Avatar className="h-6 w-6">
+                  {p.avatar_url ? <AvatarImage src={p.avatar_url} /> : null}
+                  <AvatarFallback className="text-[10px]">
+                    {(p.full_name || p.email || "?").split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="truncate">{p.full_name || p.email}</span>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteConfirmOpen(false)} className="bg-transparent" disabled={isBulkDeleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleBulkDelete} disabled={isBulkDeleting}>
+              {isBulkDeleting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                `Delete ${selectedUserIds.size} Users`
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Password Reset Dialog */}
-      <Dialog open={isPasswordResetDialogOpen} onOpenChange={setIsPasswordResetDialogOpen}>
+      <Dialog open={isPasswordResetDialogOpen} onOpenChange={(open) => {
+        setIsPasswordResetDialogOpen(open)
+        if (!open) {
+          setPasswordResetMode("email")
+          setTemporaryPassword("")
+          setShowTempPassword(false)
+        }
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Reset Password</DialogTitle>
             <DialogDescription>
-              Send a password reset email to this user?
+              Choose how to reset this user{"'"}s password.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <p className="text-sm text-muted-foreground">
-              A password reset link will be sent to the user{"'"}s email address. They can use this link to set a new password.
-            </p>
+
+          {/* Mode Toggle */}
+          <div className="flex rounded-lg border overflow-hidden">
+            <button
+              type="button"
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors ${passwordResetMode === "email"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-transparent text-muted-foreground hover:bg-muted"
+                }`}
+              onClick={() => setPasswordResetMode("email")}
+            >
+              <Mail className="w-4 h-4" />
+              Send Email
+            </button>
+            <button
+              type="button"
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors ${passwordResetMode === "temporary"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-transparent text-muted-foreground hover:bg-muted"
+                }`}
+              onClick={() => setPasswordResetMode("temporary")}
+            >
+              <KeyRound className="w-4 h-4" />
+              Set Temporary
+            </button>
           </div>
+
+          <div className="py-2">
+            {passwordResetMode === "email" ? (
+              <p className="text-sm text-muted-foreground">
+                A password reset link will be sent to the user{"'"}s email address. They can use this link to set a new password.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Set a temporary password for this user. They should change it after their first login.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="tempPassword">Temporary Password</Label>
+                  <div className="relative">
+                    <Input
+                      id="tempPassword"
+                      type={showTempPassword ? "text" : "password"}
+                      placeholder="Minimum 8 characters"
+                      value={temporaryPassword}
+                      onChange={(e) => setTemporaryPassword(e.target.value)}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowTempPassword(!showTempPassword)}
+                    >
+                      {showTempPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {temporaryPassword.length > 0 && temporaryPassword.length < 8 && (
+                    <p className="text-xs text-destructive">Password must be at least 8 characters</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsPasswordResetDialogOpen(false)} className="bg-transparent">Cancel</Button>
-            <Button onClick={() => passwordResetUserId && handlePasswordReset(passwordResetUserId)}>
-              Send Reset Email
+            <Button
+              variant="outline"
+              onClick={() => setIsPasswordResetDialogOpen(false)}
+              className="bg-transparent"
+              disabled={isResettingPassword}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => passwordResetUserId && handlePasswordReset(passwordResetUserId)}
+              disabled={isResettingPassword || (passwordResetMode === "temporary" && temporaryPassword.length < 8)}
+            >
+              {isResettingPassword && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {passwordResetMode === "email" ? "Send Reset Email" : "Set Password"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -902,6 +1230,10 @@ export default function UsersPage() {
                 <span className="text-sm text-muted-foreground">{selectedUserIds.size} selected</span>
                 <Button size="sm" onClick={() => setIsBulkActionOpen(true)}>
                   Bulk Actions
+                </Button>
+                <Button size="sm" variant="destructive" onClick={() => setBulkDeleteConfirmOpen(true)}>
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                  Delete
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setSelectedUserIds(new Set())} className="bg-transparent">
                   Clear
@@ -958,7 +1290,7 @@ export default function UsersPage() {
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-1">
-                            {getRoleBadge(profile.role)}
+                            {getRoleBadge(profile.role, profile.custom_role_id)}
                             {isUserHost(profile) && (
                               <Badge variant="outline" className="border-amber-500 text-amber-600">
                                 Host
@@ -972,8 +1304,8 @@ export default function UsersPage() {
                           )}
                           {(lastSignInLocations[profile.id] || profile.location_id) && (
                             <span>
-                              Last Location: {locations.find((l) => l.id === lastSignInLocations[profile.id])?.name || 
-                                             locations.find((l) => l.id === profile.location_id)?.name || "-"}
+                              Last Location: {locations.find((l) => l.id === lastSignInLocations[profile.id])?.name ||
+                                locations.find((l) => l.id === profile.location_id)?.name || "-"}
                             </span>
                           )}
                         </div>
@@ -1052,8 +1384,8 @@ export default function UsersPage() {
                         <TableCell>{profile.email || "-"}</TableCell>
                         <TableCell>{profile.department || "-"}</TableCell>
                         <TableCell>
-                          <div className="flex gap-1">
-                            {getRoleBadge(profile.role)}
+                          <div className="flex flex-wrap items-center gap-1">
+                            {getRoleBadge(profile.role, profile.custom_role_id)}
                             {isUserHost(profile) && (
                               <Badge variant="outline" className="border-amber-500 text-amber-600">
                                 Host
@@ -1062,9 +1394,9 @@ export default function UsersPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {locations.find((l) => l.id === lastSignInLocations[profile.id])?.name || 
-                           locations.find((l) => l.id === profile.location_id)?.name || 
-                           "-"}
+                          {locations.find((l) => l.id === lastSignInLocations[profile.id])?.name ||
+                            locations.find((l) => l.id === profile.location_id)?.name ||
+                            "-"}
                         </TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>

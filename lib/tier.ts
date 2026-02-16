@@ -23,6 +23,7 @@ export interface TenantInfo {
     sms: boolean
     ndas: boolean
     audit_logs: boolean
+    vendor_management: boolean
   }
 }
 
@@ -52,6 +53,7 @@ export interface TierFeatures {
   smsNotifications: boolean
   visitorNdasWaivers: boolean
   advancedAuditLogs: boolean
+  vendorManagement: boolean
 }
 
 const TIER_LEVEL: Record<PlanTier, number> = {
@@ -69,7 +71,7 @@ function hasAtLeast(current: PlanTier, required: PlanTier): boolean {
  */
 export function buildTierFeatures(tenant: TenantInfo): TierFeatures {
   const plan = tenant.plan
-  const addons = tenant.addons || { sso: false, sms: false, ndas: false, audit_logs: false }
+  const addons = tenant.addons || { sso: false, sms: false, ndas: false, audit_logs: false, vendor_management: false }
   const isEnterprise = plan === "enterprise"
 
   return {
@@ -98,6 +100,7 @@ export function buildTierFeatures(tenant: TenantInfo): TierFeatures {
     smsNotifications: isEnterprise || addons.sms,
     visitorNdasWaivers: isEnterprise || addons.ndas,
     advancedAuditLogs: isEnterprise || addons.audit_logs,
+    vendorManagement: isEnterprise || addons.vendor_management,
   }
 }
 
@@ -130,6 +133,7 @@ const DEFAULT_TENANT: TenantInfo = {
     sms: false,
     ndas: false,
     audit_logs: false,
+    vendor_management: false,
   },
 }
 
@@ -164,6 +168,7 @@ const ADDON_FEATURES: (keyof TierFeatures)[] = [
   "smsNotifications",
   "visitorNdasWaivers",
   "advancedAuditLogs",
+  "vendorManagement",
 ]
 
 export function isAddon(feature: keyof TierFeatures): boolean {

@@ -1,93 +1,10 @@
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/server"
 import { type NextRequest, NextResponse } from "next/server"
+import { getAzureCredentials, getAzureAccessToken, type AzureCredentials } from "@/lib/sync/azure"
 
 // Microsoft Graph API endpoint for users
 const GRAPH_API_URL = "https://graph.microsoft.com/v1.0"
-
-interface AzureCredentials {
-  tenantId: string
-  clientId: string
-  clientSecret: string
-}
-
-// Fetch Azure AD credentials from the settings table + Supabase Management API
-async function getAzureCredentials(): Promise<AzureCredentials> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
-  const projectRef = supabaseUrl.replace("https://", "").split(".")[0]
-  const accessToken = process.env.SUPABASE_ACCESS_TOKEN
-
-  if (!accessToken) {
-    throw new Error("SUPABASE_ACCESS_TOKEN is not configured. Cannot read Microsoft SSO settings.")
-  }
-
-  // Read credentials from Supabase Management API (where the SSO settings are stored)
-  const response = await fetch(
-    `https://api.supabase.com/v1/projects/${projectRef}/config/auth`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-    }
-  )
-
-  if (!response.ok) {
-    throw new Error("Failed to read auth config from Supabase. Check SUPABASE_ACCESS_TOKEN.")
-  }
-
-  const config = await response.json()
-
-  const clientId = config.EXTERNAL_AZURE_CLIENT_ID || ""
-  const clientSecret = config.EXTERNAL_AZURE_SECRET || ""
-  const azureUrl = config.EXTERNAL_AZURE_URL || ""
-  const enabled = config.EXTERNAL_AZURE_ENABLED === true
-
-  if (!enabled) {
-    throw new Error("Microsoft SSO is not enabled. Configure it in Settings > Microsoft Authentication first.")
-  }
-
-  if (!clientId || !clientSecret) {
-    throw new Error("Microsoft SSO Client ID or Secret is missing. Configure it in Settings > Microsoft Authentication first.")
-  }
-
-  // Extract tenant ID from the Azure URL: https://login.microsoftonline.com/<tenant_id>/v2.0
-  let tenantId = "common" // default to multi-tenant
-  if (azureUrl) {
-    const match = azureUrl.match(/microsoftonline\.com\/([^/]+)/)
-    if (match) tenantId = match[1]
-  }
-
-  return { tenantId, clientId, clientSecret }
-}
-
-// Get access token using Client Credentials Flow
-async function getAzureAccessToken(credentials: AzureCredentials): Promise<string> {
-  const tokenUrl = `https://login.microsoftonline.com/${credentials.tenantId}/oauth2/v2.0/token`
-
-  const params = new URLSearchParams({
-    client_id: credentials.clientId,
-    client_secret: credentials.clientSecret,
-    scope: "https://graph.microsoft.com/.default",
-    grant_type: "client_credentials",
-  })
-
-  const response = await fetch(tokenUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params.toString(),
-  })
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(`Failed to get Azure AD token: ${errorData.error_description || errorData.error || "Unknown error"}`)
-  }
-
-  const data = await response.json()
-  return data.access_token
-}
 
 // GET - Preview Azure AD users before import
 export async function GET() {
@@ -155,7 +72,7 @@ export async function GET() {
 
     if (!usersResponse.ok) {
       const errorData = await usersResponse.json().catch(() => ({}))
-      
+
       if (usersResponse.status === 401 || usersResponse.status === 403) {
         return NextResponse.json(
           {
@@ -164,7 +81,7 @@ export async function GET() {
           { status: 403 }
         )
       }
-      
+
       return NextResponse.json(
         { error: `Failed to fetch users from Azure AD: ${errorData.error?.message || "Unknown error"}` },
         { status: 500 }
@@ -254,13 +171,18 @@ export async function POST(request: NextRequest) {
     // Use admin client to create auth users and bypass RLS
     const adminClient = createAdminClient()
 
-    let syncedCount = 0
+    let createdCount = 0
+    let updatedCount = 0
+    let skippedCount = 0
     const errors: string[] = []
 
     // Process each selected user
     for (const azureUser of selectedUsers) {
       const email = azureUser.mail || azureUser.userPrincipalName
-      if (!email) continue
+      if (!email) {
+        skippedCount++
+        continue
+      }
 
       try {
         // Check if profile with this email already exists
@@ -271,9 +193,11 @@ export async function POST(request: NextRequest) {
           .single()
 
         let profileId: string
+        let isUpdate = false
 
         if (existingProfile) {
           profileId = existingProfile.id
+          isUpdate = true
           // Update existing profile (without avatar for now)
           const { error: updateError } = await adminClient
             .from("profiles")
@@ -282,7 +206,7 @@ export async function POST(request: NextRequest) {
               updated_at: new Date().toISOString(),
             })
             .eq("id", existingProfile.id)
-          
+
           if (updateError) {
             throw new Error(updateError.message)
           }
@@ -344,7 +268,7 @@ export async function POST(request: NextRequest) {
             const arrayBuffer = await photoBlob.arrayBuffer()
             const buffer = new Uint8Array(arrayBuffer)
             const mimeType = photoResponse.headers.get("content-type") || "image/jpeg"
-            
+
             // Determine file extension from mime type
             const extMap: Record<string, string> = {
               "image/jpeg": "jpg",
@@ -353,7 +277,7 @@ export async function POST(request: NextRequest) {
               "image/webp": "webp",
             }
             const fileExt = extMap[mimeType] || "jpg"
-            
+
             // Use same filename format as upload-avatar route: ${profileId}-${Date.now()}.${fileExt}
             const fileName = `${profileId}-${Date.now()}.${fileExt}`
             const filePath = fileName
@@ -361,7 +285,7 @@ export async function POST(request: NextRequest) {
             // Ensure avatars bucket exists
             const { data: buckets } = await adminClient.storage.listBuckets()
             const avatarsBucketExists = buckets?.some(b => b.name === "avatars")
-            
+
             if (!avatarsBucketExists) {
               await adminClient.storage.createBucket("avatars", {
                 public: true,
@@ -396,14 +320,44 @@ export async function POST(request: NextRequest) {
           console.log(`No photo available for ${email}`)
         }
 
-        syncedCount++
+        if (isUpdate) {
+          updatedCount++
+        } else {
+          createdCount++
+        }
       } catch (userError) {
         errors.push(`Failed to sync ${email}: ${userError instanceof Error ? userError.message : "Unknown error"}`)
       }
     }
 
+    const syncedCount = createdCount + updatedCount
+
+    // Update last sync timestamp for scheduled sync tracking
+    if (syncedCount > 0) {
+      const { data: existing } = await adminClient
+        .from("settings")
+        .select("id")
+        .eq("key", "last_azure_sync")
+        .is("location_id", null)
+        .single()
+
+      if (existing) {
+        await adminClient
+          .from("settings")
+          .update({ value: new Date().toISOString() })
+          .eq("id", existing.id)
+      } else {
+        await adminClient
+          .from("settings")
+          .insert({ key: "last_azure_sync", value: new Date().toISOString(), location_id: null })
+      }
+    }
+
     return NextResponse.json({
       synced: syncedCount,
+      created: createdCount,
+      updated: updatedCount,
+      skipped: skippedCount,
       total: selectedUsers.length,
       errors: errors.length > 0 ? errors : undefined,
     })

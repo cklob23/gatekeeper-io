@@ -15,6 +15,7 @@ export interface Profile {
   email: string
   full_name: string | null
   role: "admin" | "staff" | "viewer" | "employee"
+  custom_role_id: string | null
   location_id: string | null
   phone: string | null
   department: string | null
@@ -151,6 +152,21 @@ export interface Evacuation {
   completed_by_profile?: Profile
 }
 
+export interface Vendor {
+  id: string
+  ramp_vendor_id: string | null
+  name: string
+  name_legal: string | null
+  is_active: boolean
+  country: string | null
+  state: string | null
+  description: string | null
+  category_name: string | null
+  synced_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface AuditLog {
   id: string
   user_id: string | null
@@ -165,3 +181,6 @@ export interface AuditLog {
   // Joined fields
   user?: Profile
 }
+
+// Re-export Role from permissions lib for convenience
+export type { Role } from "@/lib/permissions"

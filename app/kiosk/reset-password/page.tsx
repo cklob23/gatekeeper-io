@@ -109,8 +109,7 @@ export default function ResetPasswordPage() {
                 <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                     <div className="container flex h-14 items-center px-4">
                         <Link href="/kiosk" className="flex items-center gap-2">
-                            <Image src="/talus-t-logo.png" alt="Talus" width={32} height={32} className="rounded" />
-                            <span className="font-semibold">Talus Sign In</span>
+                            <Logo />
                         </Link>
                     </div>
                 </header>
@@ -128,8 +127,7 @@ export default function ResetPasswordPage() {
                 <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                     <div className="container flex h-14 items-center px-4">
                         <Link href="/kiosk" className="flex items-center gap-2">
-                            <Image src="/talus-t-logo.png" alt="Talus" width={32} height={32} className="rounded" />
-                            <span className="font-semibold">Talus Sign In</span>
+                            <Logo />
                         </Link>
                     </div>
                 </header>
