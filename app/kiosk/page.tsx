@@ -2497,7 +2497,7 @@ export default function KioskPage() {
                         <Input
                           id="receptionist-email"
                           type="email"
-                          placeholder={`employee@${branding.companyName.toLowerCase().replace(/\s+/g, "")}.com`}
+                          placeholder={`you@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "gatekeeperio"}.com`}
                           required
                           value={receptionistEmail}
                           onChange={(e) => setReceptionistEmail(e.target.value)}
@@ -2838,7 +2838,7 @@ export default function KioskPage() {
                       type="email"
                       value={form.email}
                       onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      placeholder="john.doe@example.com"
+                      placeholder="you@company.com"
                     />
                   </div>
 
@@ -3051,7 +3051,7 @@ export default function KioskPage() {
                         required
                         value={bookingEmail}
                         onChange={(e) => setBookingEmail(e.target.value)}
-                        placeholder="your.email@example.com"
+                        placeholder="you@company.com"
                       />
                     </div>
 
@@ -3209,7 +3209,7 @@ export default function KioskPage() {
                       required
                       value={signOutEmail}
                       onChange={(e) => setSignOutEmail(e.target.value)}
-                      placeholder="john.doe@example.com"
+                      placeholder="you@company.com"
                     />
                   </div>
 
@@ -3253,7 +3253,7 @@ export default function KioskPage() {
                       required
                       value={employeeEmail}
                       onChange={(e) => setEmployeeEmail(e.target.value)}
-                      placeholder={`you@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "talusag"}.com`}
+                      placeholder={`you@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "gatekeeperio"}.com`}
                     />
                   </div>
 

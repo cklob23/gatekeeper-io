@@ -164,7 +164,7 @@ export default function LoginPage() {
                     <Input
                       id="email"
                       type="email"
-                      placeholder={`admin@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "talusag"}.com`}
+                      placeholder={`admin@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "gatekeeperio"}.com`}
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
