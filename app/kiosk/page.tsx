@@ -1261,7 +1261,7 @@ export default function KioskPage() {
           <!DOCTYPE html>
           <html>
           <head>
-<title>Visitor Badge</title>
+          <title>Visitor Badge</title>
             <style>
               body {
                 font-family: Arial, sans-serif;
@@ -1269,7 +1269,7 @@ export default function KioskPage() {
                 padding: 20px;
               }
 
-.badge {
+              .badge {
                 width: 3.375in;
                 height: 2.125in;
                 background: #fff;
@@ -1377,14 +1377,13 @@ export default function KioskPage() {
           <body>
             <div class="badge">
               <div class="lanyard-slot"></div>
-<div class="photo-section">
+              <div class="photo-section">
                 ${photoUrl || capturedPhoto
             ? `<img src="${photoUrl || capturedPhoto}" class="visitor-photo" crossorigin="anonymous" />`
-            : `<div class="photo-placeholder">${selectedBooking.visitor_first_name?.[0] || ""}${selectedBooking.visitor_last_name?.[0] || ""}</div>`
-          }
+            : `<div class="photo-placeholder">${selectedBooking.visitor_first_name?.[0] || ""}${selectedBooking.visitor_last_name?.[0] || ""}</div>`}
               </div>
               <div class="info-section">
-                <img src="${window.location.origin}/talusAg_Logo.png" alt="Logo" class="logo" />
+                <img src="${window.location.origin}/icon.png" alt="Logo" class="logo" />
                 <div class="visitor-name">${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}</div>
                 <div class="visitor-type">${selectedBooking.visitor_company || "Visitor"}</div>
                 <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
@@ -1735,8 +1734,8 @@ export default function KioskPage() {
                   font-family: Arial, sans-serif;
                   text-align: center;
                   padding: 20px;
-}
-.badge {
+              }
+                .badge {
                 width: 3.375in;
                 height: 2.125in;
                 background: #fff;
@@ -1851,7 +1850,7 @@ export default function KioskPage() {
             }
                 </div>
                 <div class="info-section">
-                  <img src="${window.location.origin}/talusAg_Logo.png" alt="Logo" class="logo" />
+                  <img src="${window.location.origin}/icon.png" alt="Logo" class="logo" />
                   <div class="visitor-name">${form.firstName} ${form.lastName}</div>
                   <div class="visitor-type">${form.company || selectedType?.name || "Visitor"}</div>
                   <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
