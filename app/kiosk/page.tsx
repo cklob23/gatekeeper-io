@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { hasFeature, setCurrentTenant } from "@/lib/tier"
+import { fixAzureOAuthUrl } from "@/lib/fix-azure-oauth-url"
 import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -46,8 +47,10 @@ import { useBranding } from "@/hooks/use-branding"
 
 type KioskMode = "receptionist-login" | "home" | "sign-in" | "booking" | "training" | "sign-out" | "employee-login" | "employee-dashboard" | "success" | "photo"
 
-// Storage key for remembered employee
+// Storage key for remembered employee (persists across sign-outs for auto sign-in)
 const REMEMBERED_EMPLOYEE_KEY = "remembered_employee"
+// Storage key for active employee session (persists across same-tab navigation, clears on sign-out or tab close)
+const ACTIVE_EMPLOYEE_SESSION_KEY = "active_employee_session"
 
 interface RememberedEmployee {
   id: string
@@ -292,11 +295,12 @@ export default function KioskPage() {
 
       const callbackUrl = `${window.location.origin}/auth/callback?type=kiosk&next=/kiosk`
 
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "azure",
         options: {
           redirectTo: callbackUrl,
           scopes: "email profile openid User.Read",
+          skipBrowserRedirect: true,
           queryParams: {
             prompt: "select_account",
           },
@@ -304,6 +308,9 @@ export default function KioskPage() {
       })
 
       if (error) throw error
+      if (data?.url) {
+        window.location.href = fixAzureOAuthUrl(data.url)
+      }
     } catch (error: unknown) {
       setReceptionistError(error instanceof Error ? error.message : "Microsoft login failed")
       setReceptionistLoading(false)
@@ -404,12 +411,19 @@ export default function KioskPage() {
 
           // Remember this employee
           if (typeof window !== "undefined") {
-            localStorage.setItem("rememberedEmployee", JSON.stringify({
+            const rememberedData: RememberedEmployee = {
               id: profile.id,
               email: profile.email,
-              fullName: profile.full_name,
+              fullName: profile.full_name || "",
               locationId: profile.location_id,
-            }))
+              role: profile.role,
+              custom_role_id: profile.custom_role_id,
+              avatar_url: profile.avatar_url || null,
+              created_at: profile.created_at,
+              updated_at: profile.updated_at,
+            }
+            localStorage.setItem(REMEMBERED_EMPLOYEE_KEY, JSON.stringify(rememberedData))
+            setRememberedEmployee(rememberedData)
           }
         }
 
@@ -536,7 +550,7 @@ export default function KioskPage() {
         // Using OpenStreetMap's Nominatim API for reverse geocoding (free, no API key needed)
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${userCoords?.lat}&lon=${userCoords?.lng}&zoom=10`,
-          { headers: { "User-Agent": "GatekeeperioSignIn/1.0" } }
+          { headers: { "User-Agent": "TalusSignIn/1.0" } }
         )
 
         if (response.ok) {
@@ -596,6 +610,19 @@ export default function KioskPage() {
   const isSelectedDifferentFromNearest = nearestLocation && selectedLocation !== nearestLocation.location.id
   const currentTimezone = currentLocation?.timezone || "UTC"
 
+  // Geofence enforcement
+  const geofenceRadius = currentLocation?.auto_signin_radius_meters
+  // If no radius is set (null/0), geofencing is disabled — allow everyone
+  // If user denied geolocation (no coords), we can't enforce — allow but warn
+  const isOutsideGeofence = Boolean(
+    geofenceRadius && geofenceRadius > 0 && selectedLocationDistance && selectedLocationDistance > geofenceRadius
+  )
+  const isWithinGeofence = !isOutsideGeofence
+
+  // Auto sign-in countdown for remembered employees within geofence
+  const [autoSignInCountdown, setAutoSignInCountdown] = useState<number | null>(null)
+  const autoSignInTimerRef = useRef<NodeJS.Timeout | null>(null)
+
   // Update clock every second
   useEffect(() => {
     const timer = setInterval(() => {
@@ -604,22 +631,102 @@ export default function KioskPage() {
     return () => clearInterval(timer)
   }, [])
 
-  // Check for remembered employee and auto-login
+  // Check for remembered employee on mount
   useEffect(() => {
     const stored = localStorage.getItem(REMEMBERED_EMPLOYEE_KEY)
     if (stored) {
       try {
         const employee = JSON.parse(stored) as RememberedEmployee
         setRememberedEmployee(employee)
-        // Auto-login if at their location
-        if (nearestLocation && employee.locationId === nearestLocation.location.id) {
-          autoSignInEmployee(employee)
-        }
       } catch (e) {
         localStorage.removeItem(REMEMBERED_EMPLOYEE_KEY)
       }
     }
-  }, [nearestLocation])
+  }, [])
+
+  // Restore active employee session on mount (survives same-tab navigation)
+  useEffect(() => {
+    const session = sessionStorage.getItem(ACTIVE_EMPLOYEE_SESSION_KEY)
+    if (session) {
+      try {
+        const { employee, signInRecord } = JSON.parse(session)
+        if (employee && signInRecord) {
+          setCurrentEmployee(employee)
+          setEmployeeSignInRecord(signInRecord)
+          setEmployeeSignedIn(true)
+          setMode("employee-dashboard")
+        }
+      } catch {
+        sessionStorage.removeItem(ACTIVE_EMPLOYEE_SESSION_KEY)
+      }
+    }
+  }, [])
+
+  // Persist active employee session to sessionStorage whenever it changes
+  // This allows the session to survive same-tab navigation (e.g. visiting admin portal and back)
+  useEffect(() => {
+    if (employeeSignedIn && currentEmployee && employeeSignInRecord) {
+      sessionStorage.setItem(ACTIVE_EMPLOYEE_SESSION_KEY, JSON.stringify({
+        employee: currentEmployee,
+        signInRecord: employeeSignInRecord,
+      }))
+    }
+  }, [employeeSignedIn, currentEmployee, employeeSignInRecord])
+
+  // Auto sign-in countdown for remembered employees within geofence
+  useEffect(() => {
+    if (!rememberedEmployee || employeeSignedIn || mode !== "home") return
+    if (!selectedLocation) return
+
+    const radius = currentLocation?.auto_signin_radius_meters
+    const hasGeofence = radius && radius > 0
+
+    // If geofence is configured, we need a distance to check against
+    if (hasGeofence && selectedLocationDistance && selectedLocationDistance > radius) {
+      // Outside geofence — clear any running countdown
+      if (autoSignInTimerRef.current) {
+        clearInterval(autoSignInTimerRef.current)
+        autoSignInTimerRef.current = null
+      }
+      setAutoSignInCountdown(null)
+      return
+    }
+
+    // If geofence is configured but we don't have distance yet (geo still loading),
+    // wait — don't start countdown until we know
+    if (hasGeofence && !selectedLocationDistance) return
+
+    // Either no geofence (auto-sign-in always allowed) or within geofence
+    // Start a 5-second countdown, then auto sign-in
+    if (autoSignInTimerRef.current) return // already running
+    setAutoSignInCountdown(5)
+    autoSignInTimerRef.current = setInterval(() => {
+      setAutoSignInCountdown(prev => {
+        if (prev === null || prev <= 1) {
+          if (autoSignInTimerRef.current) {
+            clearInterval(autoSignInTimerRef.current)
+            autoSignInTimerRef.current = null
+          }
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => {
+      if (autoSignInTimerRef.current) {
+        clearInterval(autoSignInTimerRef.current)
+        autoSignInTimerRef.current = null
+      }
+    }
+  }, [rememberedEmployee, employeeSignedIn, mode, selectedLocation, selectedLocationDistance, currentLocation?.auto_signin_radius_meters])
+
+  // Fire auto sign-in when countdown reaches 0
+  useEffect(() => {
+    if (autoSignInCountdown === 0 && rememberedEmployee && !employeeSignedIn) {
+      autoSignInEmployee(rememberedEmployee)
+    }
+  }, [autoSignInCountdown])
 
   // Pre-fill employee email when entering employee-login mode with a remembered employee
   useEffect(() => {
@@ -638,61 +745,48 @@ export default function KioskPage() {
     setError(null)
 
     try {
-      const supabase = createClient()
-
-      // Check if already signed in today
-      const { data: existingSignIn } = await supabase
-        .from("employee_sign_ins")
-        .select("*")
-        .eq("profile_id", employee.id)
-        .is("sign_out_time", null)
-        .single()
-
-      const currentLoc = locations.find(l => l.id === selectedLocation)
-      const locationName = currentLoc?.name
-      const locationTimezone = currentLoc?.timezone
-      let signInTime = new Date().toISOString()
-
-      if (!existingSignIn) {
-        // Auto sign in - use selectedLocation instead of nearestLocation
-        const { error: insertError } = await supabase.from("employee_sign_ins").insert({
+      // Call server-side API (uses service-role key, no auth session required)
+      const response = await fetch("/api/kiosk/employee-auto-signin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           profile_id: employee.id,
           location_id: selectedLocation,
-          auto_signed_in: true,
-          device_id: navigator.userAgent,
-        })
+        }),
+      })
 
-        if (insertError) {
-          console.log("[v0] Employee sign-in insert error:", insertError)
-          throw insertError
-        }
-      } else {
-        signInTime = existingSignIn.sign_in_time
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to auto sign in")
       }
 
       setCurrentEmployee({
-        id: employee.id,
-        email: employee.email,
-        full_name: employee.fullName,
+        id: result.profile.id,
+        email: result.profile.email,
+        full_name: result.profile.full_name,
         phone: null,
         department: null,
-        role: employee.role,
-        custom_role_id: employee.custom_role_id,
-        location_id: employee.locationId,
-        avatar_url: employee.avatar_url,
-        last_password_change: null,
-        last_auth_time: null,
-        failed_login_attempts: 0,
-        account_locked_until: null,
-        timezone: null,
+        role: result.profile.role,
+        custom_role_id: result.profile.custom_role_id,
+        location_id: result.profile.location_id,
+        timezone: result.profile.timezone,
+        avatar_url: result.profile.avatar_url,
+        last_auth_time: result.profile.last_auth_time,
+        last_password_change: result.profile.last_password_change,
+        account_locked_until: result.profile.account_locked_until,
+        failed_login_attempts: result.profile.failed_login_attempts,
         created_at: "",
         updated_at: "",
       })
-      setEmployeeSignInRecord({ sign_in_time: signInTime, location_name: locationName, timezone: locationTimezone })
+      setEmployeeSignInRecord({
+        sign_in_time: result.signIn.sign_in_time,
+        location_name: result.signIn.location_name,
+        timezone: result.signIn.timezone,
+      })
       setEmployeeSignedIn(true)
       setMode("employee-dashboard")
     } catch (err) {
-      console.log("[v0] Auto sign-in error:", err)
       setError(err instanceof Error ? err.message : "Failed to auto sign in")
     } finally {
       setIsLoading(false)
@@ -845,6 +939,10 @@ export default function KioskPage() {
   // Complete sign-in for a pre-registered booking
   async function handleBookingSignIn() {
     if (!selectedBooking) return
+    if (isOutsideGeofence) {
+      setError(`You are too far from ${currentLocation?.name || "the selected location"}. Please move within ${geofenceRadius ? Math.round(geofenceRadius) : 0} meters to check in.`)
+      return
+    }
     setIsLoading(true)
     setError(null)
 
@@ -1286,7 +1384,7 @@ export default function KioskPage() {
           }
               </div>
               <div class="info-section">
-                <img src="${window.location.origin}/icon.png" alt="Logo" class="logo" />
+                <img src="${window.location.origin}/talusAg_Logo.png" alt="Logo" class="logo" />
                 <div class="visitor-name">${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}</div>
                 <div class="visitor-type">${selectedBooking.visitor_company || "Visitor"}</div>
                 <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
@@ -1326,6 +1424,11 @@ export default function KioskPage() {
   // Check if visitor type requires training and redirect if needed
   async function handleSignInSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (isOutsideGeofence) {
+      setError(`You are too far from ${currentLocation?.name || "the selected location"}. Please move within ${geofenceRadius ? Math.round(geofenceRadius) : 0} meters to sign in.`)
+      return
+    }
+
     const selectedType = visitorTypes.find((t) => t.id === form.visitorTypeId)
 
     if (selectedType?.requires_training) {
@@ -1748,7 +1851,7 @@ export default function KioskPage() {
             }
                 </div>
                 <div class="info-section">
-                  <img src="${window.location.origin}/icon.png" alt="Logo" class="logo" />
+                  <img src="${window.location.origin}/talusAg_Logo.png" alt="Logo" class="logo" />
                   <div class="visitor-name">${form.firstName} ${form.lastName}</div>
                   <div class="visitor-type">${form.company || selectedType?.name || "Visitor"}</div>
                   <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
@@ -2029,6 +2132,12 @@ export default function KioskPage() {
 
   async function handleEmployeeLogin(e: React.FormEvent) {
     e.preventDefault()
+
+    if (isOutsideGeofence) {
+      setError(`You are too far from ${currentLocation?.name || "the selected location"}. Please move within ${geofenceRadius ? Math.round(geofenceRadius) : 0} meters to sign in.`)
+      return
+    }
+
     setIsLoading(true)
     setError(null)
 
@@ -2161,13 +2270,17 @@ export default function KioskPage() {
         options: {
           redirectTo: redirectUrl,
           scopes: "email profile openid User.Read",
+          skipBrowserRedirect: true,
           queryParams: {
-            prompt: "select_account", // Always show account picker for reliability
+            prompt: "select_account",
           },
         },
       })
 
       if (error) throw error
+      if (data?.url) {
+        window.location.href = fixAzureOAuthUrl(data.url)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to sign in with Microsoft")
       setIsLoading(false)
@@ -2179,47 +2292,35 @@ export default function KioskPage() {
     setIsLoading(true)
 
     try {
-      const supabase = createClient()
+      // Use server-side API to update the sign-in record (bypasses RLS)
+      // This works for all sign-in methods: password, Microsoft SSO, and auto sign-in
+      const response = await fetch("/api/kiosk/employee-signout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile_id: currentEmployee.id,
+          location_id: selectedLocation,
+        }),
+      })
 
-      // Find active employee sign-in
-      const { data: signIn } = await supabase
-        .from("employee_sign_ins")
-        .select("*")
-        .eq("profile_id", currentEmployee.id)
-        .is("sign_out_time", null)
-        .order("sign_in_time", { ascending: false })
-        .limit(1)
-        .single()
-
-      if (signIn) {
-        await supabase
-          .from("employee_sign_ins")
-          .update({ sign_out_time: new Date().toISOString() })
-          .eq("id", signIn.id)
-
-        // Log employee sign-out via API to bypass RLS
-        await logAuditViaApi({
-          action: "employee.sign_out",
-          entityType: "employee",
-          entityId: currentEmployee.id,
-          description: `Employee signed out: ${currentEmployee.full_name || currentEmployee.email}`,
-          metadata: {
-            profile_id: currentEmployee.id,
-            sign_in_id: signIn.id,
-            location_id: signIn.location_id
-          }
-        })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || "Failed to sign out")
       }
 
-      // Sign out of Supabase Auth with global scope to clear all sessions
-      await supabase.auth.signOut({ scope: "global" })
+      // Also sign out of Supabase Auth if there's an active session
+      const supabase = createClient()
+      await supabase.auth.signOut({ scope: "global" }).catch(() => { })
 
-      // Clear remembered employee from local storage
-      localStorage.removeItem(REMEMBERED_EMPLOYEE_KEY)
-      localStorage.removeItem("rememberedEmployee")
+      // Clear the active session from sessionStorage
+      sessionStorage.removeItem(ACTIVE_EMPLOYEE_SESSION_KEY)
 
-      // Clear all state
-      setRememberedEmployee(null)
+      // NOTE: Do NOT clear REMEMBERED_EMPLOYEE_KEY here.
+      // The "Remember Me" localStorage entry should survive sign-outs
+      // so the auto sign-in countdown works when the employee returns.
+      // Only forgetEmployee() (triggered by "Not you?") should clear it.
+
+      // Clear runtime state but keep rememberedEmployee so the card shows on return
       setSuccessData({
         name: currentEmployee.full_name || currentEmployee.email,
         badge: "Employee",
@@ -2239,9 +2340,10 @@ export default function KioskPage() {
   }
 
   async function forgetEmployee() {
-    // Clear local storage
+    // Clear local storage and session storage
     localStorage.removeItem(REMEMBERED_EMPLOYEE_KEY)
     localStorage.removeItem("rememberedEmployee")
+    sessionStorage.removeItem(ACTIVE_EMPLOYEE_SESSION_KEY)
     setRememberedEmployee(null)
 
     // Also sign out of Supabase if currently authenticated
@@ -2467,14 +2569,29 @@ export default function KioskPage() {
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-6 sm:mb-12">
               <h1 className="text-2xl sm:text-4xl font-bold text-foreground mb-2 sm:mb-3">Visitor Check-In</h1>
-              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName || "Gatekeeper.io"}. Please sign in or sign out below.</p>
+              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName}. Please sign in or sign out below.</p>
             </div>
+
+            {/* Geofence warning banner */}
+            {isOutsideGeofence && selectedLocationDistance && geofenceRadius && (
+              <div className="mb-4 sm:mb-6 rounded-lg border border-amber-300 bg-amber-50 p-3 sm:p-4 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-amber-800">
+                    You are {formatDistance(selectedLocationDistance, "")} from {currentLocation?.name || "this location"}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    Sign-in is only available within {formatDistance(geofenceRadius, "")} of this location. Please move closer to sign in.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Visitor options - always shown */}
             <div className={`grid gap-3 sm:gap-6 ${hasFeature("visitorPreRegistration") ? "grid-cols-3" : "grid-cols-2"}`}>
               <Card
-                className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all group flex flex-col h-full"
-                onClick={() => setMode("sign-in")}
+                className={`transition-all group flex flex-col h-full ${isOutsideGeofence ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:shadow-lg hover:border-primary/50"}`}
+                onClick={() => !isOutsideGeofence && setMode("sign-in")}
               >
                 <CardHeader className="text-center pb-2 sm:pb-4 p-3 sm:p-6 flex-1">
                   <div className="mx-auto w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-primary/10 flex items-center justify-center mb-2 sm:mb-4 group-hover:bg-primary/20 transition-colors">
@@ -2484,7 +2601,7 @@ export default function KioskPage() {
                   <CardDescription className="text-xs sm:text-sm hidden sm:block">New visitor? Sign in here</CardDescription>
                 </CardHeader>
                 <CardContent className="p-3 pt-0 sm:p-6 sm:pt-0 mt-auto">
-                  <Button className="w-full" size="lg">
+                  <Button className="w-full" size="lg" disabled={isOutsideGeofence}>
                     Sign In
                   </Button>
                 </CardContent>
@@ -2492,8 +2609,8 @@ export default function KioskPage() {
 
               {hasFeature("visitorPreRegistration") && (
                 <Card
-                  className="cursor-pointer hover:shadow-lg hover:border-blue-500/50 transition-all group flex flex-col h-full"
-                  onClick={() => setMode("booking")}
+                  className={`transition-all group flex flex-col h-full ${isOutsideGeofence ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:shadow-lg hover:border-blue-500/50"}`}
+                  onClick={() => !isOutsideGeofence && setMode("booking")}
                 >
                   <CardHeader className="text-center pb-2 sm:pb-4 p-3 sm:p-6 flex-1">
                     <div className="mx-auto w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-blue-100 flex items-center justify-center mb-2 sm:mb-4 group-hover:bg-blue-200 transition-colors">
@@ -2503,7 +2620,7 @@ export default function KioskPage() {
                     <CardDescription className="text-xs sm:text-sm hidden sm:block">Pre-registered? Check in here</CardDescription>
                   </CardHeader>
                   <CardContent className="p-3 pt-0 sm:p-6 sm:pt-0 mt-auto">
-                    <Button variant="outline" className="w-full bg-transparent border-blue-200 text-blue-600 hover:bg-blue-50" size="lg">
+                    <Button variant="outline" className="w-full bg-transparent border-blue-200 text-blue-600 hover:bg-blue-50" size="lg" disabled={isOutsideGeofence}>
                       Check In
                     </Button>
                   </CardContent>
@@ -2565,8 +2682,8 @@ export default function KioskPage() {
                 </Card>
               ) : (
                 <Card
-                  className="cursor-pointer hover:shadow-lg hover:border-primary/50 transition-all group mb-4 sm:mb-6"
-                  onClick={() => setMode("employee-login")}
+                  className={`transition-all group mb-4 sm:mb-6 ${isOutsideGeofence ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:shadow-lg hover:border-primary/50"}`}
+                  onClick={() => !isOutsideGeofence && setMode("employee-login")}
                 >
                   <CardContent className="py-3 sm:py-4 px-3 sm:px-6">
                     <div className="flex items-center justify-between gap-2">
@@ -2576,7 +2693,9 @@ export default function KioskPage() {
                         </div>
                         <div>
                           <h3 className="font-semibold text-sm sm:text-base">Employee Sign In</h3>
-                          <p className="text-xs sm:text-sm text-muted-foreground">{branding.companyName || "Gatekeeper.io"} employees sign in here</p>
+                          <p className="text-xs sm:text-sm text-muted-foreground">
+                            {isOutsideGeofence ? "Move closer to sign in" : `${branding.companyName} employees sign in here`}
+                          </p>
                         </div>
                       </div>
                       <ArrowLeft className="w-5 h-5 text-muted-foreground rotate-180 shrink-0" />
@@ -2587,7 +2706,7 @@ export default function KioskPage() {
 
               {/* Remembered employee - only show quick sign-in option if NOT already signed in */}
               {rememberedEmployee && !employeeSignedIn && (
-                <Card className="mb-4 sm:mb-6 border-blue-200 bg-blue-50/50">
+                <Card className={`mb-4 sm:mb-6 ${isOutsideGeofence ? "border-amber-200 bg-amber-50/50" : autoSignInCountdown !== null && autoSignInCountdown > 0 ? "border-green-300 bg-green-50/50" : "border-blue-200 bg-blue-50/50"}`}>
                   <CardContent className="py-3 sm:py-4 px-3 sm:px-6">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                       <div className="flex items-center gap-3 sm:gap-4">
@@ -2600,10 +2719,16 @@ export default function KioskPage() {
                         <div className="min-w-0">
                           <h3 className="font-semibold text-sm sm:text-base truncate">{rememberedEmployee.fullName || rememberedEmployee.email}</h3>
                           <p className="text-xs sm:text-sm text-muted-foreground">
-                            {nearestLocation && rememberedEmployee.locationId === nearestLocation.location.id ? (
-                              "You're at your registered location"
+                            {isOutsideGeofence ? (
+                              <span className="text-amber-700">
+                                {selectedLocationDistance ? formatDistance(selectedLocationDistance, "away") : "Too far away"} — move closer to sign in
+                              </span>
+                            ) : autoSignInCountdown !== null && autoSignInCountdown > 0 ? (
+                              <span className="text-green-700">
+                                Auto signing in, in {autoSignInCountdown}s...
+                              </span>
                             ) : (
-                              "Quick sign in available"
+                              selectedLocationDistance ? formatDistance(selectedLocationDistance, "from location") : "Quick sign in available"
                             )}
                           </p>
                         </div>
@@ -2615,22 +2740,46 @@ export default function KioskPage() {
                           className="text-xs sm:text-sm bg-transparent"
                           onClick={(e) => {
                             e.stopPropagation()
+                            // Cancel any running countdown
+                            if (autoSignInTimerRef.current) {
+                              clearInterval(autoSignInTimerRef.current)
+                              autoSignInTimerRef.current = null
+                            }
+                            setAutoSignInCountdown(null)
                             forgetEmployee()
                           }}
                         >
                           Not you?
                         </Button>
-                        <Button
-                          size="sm"
-                          className="text-xs sm:text-sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            autoSignInEmployee(rememberedEmployee)
-                          }}
-                          disabled={isLoading}
-                        >
-                          Sign In
-                        </Button>
+                        {autoSignInCountdown !== null && autoSignInCountdown > 0 ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs sm:text-sm bg-transparent"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (autoSignInTimerRef.current) {
+                                clearInterval(autoSignInTimerRef.current)
+                                autoSignInTimerRef.current = null
+                              }
+                              setAutoSignInCountdown(null)
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="text-xs sm:text-sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              autoSignInEmployee(rememberedEmployee)
+                            }}
+                            disabled={isLoading || isOutsideGeofence}
+                          >
+                            Sign In
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -2846,9 +2995,19 @@ export default function KioskPage() {
                     />
                   </div>
 
+                  {isOutsideGeofence && (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <p className="text-xs text-amber-700">
+                        You are too far from {currentLocation?.name || "this location"}.
+                        Move within {geofenceRadius ? formatDistance(geofenceRadius, "") : "range"} to sign in.
+                      </p>
+                    </div>
+                  )}
+
                   {error && <p className="text-sm text-destructive">{error}</p>}
 
-                  <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
+                  <Button type="submit" className="w-full" size="lg" disabled={isLoading || isOutsideGeofence}>
                     {isLoading ? "Processing..." : selectedVisitorType?.requires_training ? (
                       <>
                         <PlayCircle className="w-4 h-4 mr-2" />
@@ -2981,6 +3140,16 @@ export default function KioskPage() {
                       </div>
                     )}
 
+                    {isOutsideGeofence && (
+                      <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <p className="text-xs text-amber-700">
+                          You are too far from {currentLocation?.name || "this location"}.
+                          Move within {geofenceRadius ? formatDistance(geofenceRadius, "") : "range"} to check in.
+                        </p>
+                      </div>
+                    )}
+
                     <div className="flex gap-3">
                       <Button
                         variant="outline"
@@ -2995,7 +3164,7 @@ export default function KioskPage() {
                       </Button>
                       <Button
                         className="flex-1"
-                        disabled={!selectedBooking || isLoading}
+                        disabled={!selectedBooking || isLoading || isOutsideGeofence}
                         onClick={handleBookingSignIn}
                       >
                         {isLoading ? (
@@ -3070,7 +3239,7 @@ export default function KioskPage() {
                   </div>
                   <div>
                     <CardTitle className="text-xl sm:text-2xl">Employee Sign In</CardTitle>
-                    <CardDescription className="text-xs sm:text-sm">Sign in with your {branding.companyName || "Gatekeeper.io"} credentials</CardDescription>
+                    <CardDescription className="text-xs sm:text-sm">Sign in with your {branding.companyName} credentials</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -3084,7 +3253,8 @@ export default function KioskPage() {
                       required
                       value={employeeEmail}
                       onChange={(e) => setEmployeeEmail(e.target.value)}
-                      placeholder={`you@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "gatekeeper"}.com`} />
+                      placeholder={`you@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "talusag"}.com`}
+                    />
                   </div>
 
                   <div className="space-y-2">
@@ -3137,9 +3307,19 @@ export default function KioskPage() {
                     </div>
                   )}
 
+                  {isOutsideGeofence && (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <p className="text-xs text-amber-700">
+                        You are too far from {currentLocation?.name || "this location"}.
+                        Move within {geofenceRadius ? formatDistance(geofenceRadius, "") : "range"} to sign in.
+                      </p>
+                    </div>
+                  )}
+
                   {error && <p className="text-sm text-destructive">{error}</p>}
 
-                  <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
+                  <Button type="submit" className="w-full" size="lg" disabled={isLoading || isOutsideGeofence}>
                     {isLoading ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -3373,7 +3553,7 @@ export default function KioskPage() {
                       />
                       <label htmlFor="acknowledge" className="text-sm leading-relaxed cursor-pointer">
                         I confirm that I have watched and understood the safety training video. I agree to follow
-                        all safety guidelines and procedures while on {branding.companyName || "Gatekeeper.io"} premises. I understand that failure
+                        all safety guidelines and procedures while on {branding.companyName} premises. I understand that failure
                         to comply may result in being asked to leave the facility.
                       </label>
                     </div>
@@ -3553,7 +3733,7 @@ export default function KioskPage() {
                 <p className="text-xs sm:text-sm text-muted-foreground mb-4 sm:mb-6">
                   {successData.type === "in"
                     ? "Please collect your visitor badge from reception."
-                    : `Thank you for visiting ${branding.companyName || "Gatekeeper.io"}.`}
+                    : `Thank you for visiting ${branding.companyName}.`}
                 </p>
 
                 <Button onClick={handleReset} size="lg" className="w-full">

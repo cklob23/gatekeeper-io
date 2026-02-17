@@ -52,7 +52,7 @@ export default function LocationsPage() {
   // Geocode address using OpenStreetMap Nominatim API (free, no API key required)
   async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
     if (!address.trim()) return null
-    
+
     setIsGeocoding(true)
     try {
       const response = await fetch(
@@ -64,7 +64,7 @@ export default function LocationsPage() {
         }
       )
       const data = await response.json()
-      
+
       if (data && data.length > 0) {
         return {
           lat: parseFloat(data[0].lat),
@@ -82,9 +82,9 @@ export default function LocationsPage() {
 
   function openCreateDialog() {
     setEditingLocation(null)
-    setForm({ 
-      name: "", 
-      address: "", 
+    setForm({
+      name: "",
+      address: "",
       timezone: "America/New_York",
       latitude: null,
       longitude: null,
@@ -113,9 +113,9 @@ export default function LocationsPage() {
     // Try to geocode if address changed and no coords set
     let latitude = form.latitude
     let longitude = form.longitude
-    
+
     if (form.address && (
-      !editingLocation || 
+      !editingLocation ||
       editingLocation.address !== form.address ||
       !latitude || !longitude
     )) {
@@ -297,6 +297,7 @@ export default function LocationsPage() {
                       ) : (
                         <span>No coords</span>
                       )}
+                      <span>Auto Sign-In (meters): {location.auto_signin_radius_meters}</span>
                     </div>
                     <div className="flex justify-end gap-2 pt-1">
                       <Button variant="ghost" size="sm" onClick={() => openEditDialog(location)}>
@@ -320,6 +321,7 @@ export default function LocationsPage() {
                       <TableHead>Address</TableHead>
                       <TableHead>Coordinates</TableHead>
                       <TableHead>Timezone</TableHead>
+                      <TableHead>Auto Sign-In Radius (meters)</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -339,6 +341,7 @@ export default function LocationsPage() {
                           )}
                         </TableCell>
                         <TableCell>{location.timezone}</TableCell>
+                        <TableCell>{location.auto_signin_radius_meters || "-"}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
                             <Button variant="ghost" size="icon" onClick={() => openEditDialog(location)}>

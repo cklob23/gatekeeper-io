@@ -72,6 +72,7 @@ export function AdminHeader() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [isOpen, setIsOpen] = useState(false)
   const [profileModalOpen, setProfileModalOpen] = useState(false)
+  const [companyName, setCompanyName] = useState("Talus")
   const router = useRouter()
   const { branding } = useBranding()
 
@@ -79,7 +80,7 @@ export function AdminHeader() {
     const supabase = createClient()
     supabase.auth.getUser().then(async ({ data }) => {
       setUser(data.user)
-      
+
       // Fetch profile with avatar
       if (data.user) {
         const { data: profileData } = await supabase
@@ -87,7 +88,7 @@ export function AdminHeader() {
           .select("full_name, avatar_url")
           .eq("id", data.user.id)
           .single()
-        
+
         if (profileData) {
           setProfile(profileData)
         }
@@ -97,7 +98,7 @@ export function AdminHeader() {
 
   useEffect(() => {
     fetchRecentActivity()
-    
+
     // Set up real-time subscription for visitor sign-ins
     const supabase = createClient()
     const visitorChannel = supabase
@@ -163,7 +164,7 @@ export function AdminHeader() {
         const visitor = Array.isArray(item.visitor) ? item.visitor[0] : item.visitor
         const visitorType = Array.isArray(item.visitor_type) ? item.visitor_type[0] : item.visitor_type
         const location = Array.isArray(item.location) ? item.location[0] : item.location
-        
+
         combined.push({
           id: item.id,
           type: "visitor",
@@ -194,7 +195,7 @@ export function AdminHeader() {
       for (const item of employeeData) {
         const profile = Array.isArray(item.profile) ? item.profile[0] : item.profile
         const location = Array.isArray(item.location) ? item.location[0] : item.location
-        
+
         combined.push({
           id: item.id,
           type: "employee",
@@ -215,13 +216,13 @@ export function AdminHeader() {
 
   async function handleSignOut() {
     const supabase = createClient()
-    
+
     // Sign out from Supabase with local scope only - does NOT affect kiosk receptionist sessions
     await supabase.auth.signOut({ scope: "local" })
-    
+
     // Clear any cached user state
     setUser(null)
-    
+
     // Redirect to login
     router.push("/auth/login")
     router.refresh()
@@ -243,7 +244,7 @@ export function AdminHeader() {
     <header className="h-14 sm:h-16 border-b bg-background flex items-center justify-between px-3 sm:px-6">
       <div className="flex items-center gap-2">
         <MobileSidebar />
-        <h2 className="text-base sm:text-lg font-semibold">{branding?.companyName || "Gatekeeperio.com"} Admin</h2>
+        <h2 className="text-base sm:text-lg font-semibold">{branding?.companyName || "Talus"} Admin</h2>
       </div>
       <div className="flex items-center gap-2 sm:gap-4">
         <Popover open={isOpen} onOpenChange={handleOpenChange}>
@@ -284,13 +285,12 @@ export function AdminHeader() {
                     >
                       <div className="flex items-start gap-3">
                         <div
-                          className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-                            activity.sign_out_time
-                              ? 'bg-orange-100 text-orange-600'
-                              : activity.type === 'employee'
+                          className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${activity.sign_out_time
+                            ? 'bg-orange-100 text-orange-600'
+                            : activity.type === 'employee'
                               ? 'bg-blue-100 text-blue-600'
                               : 'bg-primary/10 text-primary'
-                          }`}
+                            }`}
                         >
                           {activity.sign_out_time ? (
                             <LogOut className="w-5 h-5" />

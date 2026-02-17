@@ -14,7 +14,7 @@ import { Logo } from "@/components/logo"
 import { useBranding } from "@/hooks/use-branding"
 import { logAudit } from "@/lib/audit-log"
 import { loadPasswordPolicy, isPasswordExpired, needsReauthentication } from "@/lib/password-policy"
-import { hasFeature } from "@/lib/tier"
+import { fixAzureOAuthUrl } from "@/lib/fix-azure-oauth-url"
 
 export default function LoginPage() {
   const { branding } = useBranding()
@@ -26,13 +26,13 @@ export default function LoginPage() {
   const [microsoftSsoEnabled, setMicrosoftSsoEnabled] = useState(false)
   const router = useRouter()
 
+  // Check Microsoft SSO status directly from the API (not via hasFeature,
+  // because the TenantProvider hasn't loaded yet on the login page)
   useEffect(() => {
-    if (hasFeature("ssoIntegration")) {
-      fetch("/api/auth/microsoft-sso-status")
-        .then((res) => res.json())
-        .then((data) => setMicrosoftSsoEnabled(data.enabled === true))
-        .catch(() => setMicrosoftSsoEnabled(false))
-    }
+    fetch("/api/auth/microsoft-sso-status")
+      .then((res) => res.json())
+      .then((data) => setMicrosoftSsoEnabled(data.enabled === true))
+      .catch(() => setMicrosoftSsoEnabled(false))
   }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -106,18 +106,22 @@ export default function LoginPage() {
       // Construct redirect URL - must match what's configured in Supabase Auth settings
       const callbackUrl = `${window.location.origin}/auth/callback?type=admin&next=/admin`
 
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "azure",
         options: {
           redirectTo: callbackUrl,
           scopes: "email profile openid User.Read",
+          skipBrowserRedirect: true,
           queryParams: {
-            prompt: "select_account", // Always show account picker
+            prompt: "select_account",
           },
         },
       })
 
       if (error) throw error
+      if (data?.url) {
+        window.location.href = fixAzureOAuthUrl(data.url)
+      }
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
       setIsLoading(false)
@@ -131,7 +135,7 @@ export default function LoginPage() {
         <Logo />
         <div className="flex flex-col items-center gap-3 mt-6">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="text-sm text-muted-foreground animate-pulse">Loading dashboard...</p>
+          <p className="text-sm text-muted-foreground animate-pulse">Loading...</p>
         </div>
       </div>
     )
