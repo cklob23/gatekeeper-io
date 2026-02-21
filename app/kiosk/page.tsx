@@ -7,6 +7,8 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { hasFeature, setCurrentTenant } from "@/lib/tier"
 import { fixAzureOAuthUrl } from "@/lib/fix-azure-oauth-url"
+import { printVisitorBadge } from "@/lib/print-badge"
+import { usePreciseGeolocation } from "@/hooks/use-precise-geolocation"
 import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -36,6 +38,8 @@ import {
   RefreshCw,
   Lock,
   Shield,
+  Printer,
+  Calendar
 } from "lucide-react"
 import type { VisitorType, Host, Location, Profile } from "@/types/database"
 import Link from "next/link"
@@ -48,9 +52,9 @@ import { useBranding } from "@/hooks/use-branding"
 type KioskMode = "receptionist-login" | "home" | "sign-in" | "booking" | "training" | "sign-out" | "employee-login" | "employee-dashboard" | "success" | "photo"
 
 // Storage key for remembered employee (persists across sign-outs for auto sign-in)
-const REMEMBERED_EMPLOYEE_KEY = "remembered_employee"
+const REMEMBERED_EMPLOYEE_KEY = "talusag_remembered_employee"
 // Storage key for active employee session (persists across same-tab navigation, clears on sign-out or tab close)
-const ACTIVE_EMPLOYEE_SESSION_KEY = "active_employee_session"
+const ACTIVE_EMPLOYEE_SESSION_KEY = "talusag_active_employee_session"
 
 interface RememberedEmployee {
   id: string
@@ -100,7 +104,16 @@ export default function KioskPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [signOutEmail, setSignOutEmail] = useState("")
-  const [successData, setSuccessData] = useState<{ name: string; badge: string; type: "in" | "out" } | null>(null)
+  const [successData, setSuccessData] = useState<{
+    name: string
+    badge: string
+    type: "in" | "out"
+    company?: string
+    visitorType?: string
+    locationName?: string
+    photoUrl?: string
+  } | null>(null)
+
 
   const [form, setForm] = useState<SignInForm>({
     firstName: "",
@@ -112,14 +125,20 @@ export default function KioskPage() {
     hostId: "",
     purpose: "",
   })
-
-  // Geolocation state
-  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null)
-  const [geoError, setGeoError] = useState<string | null>(null)
-  const [isDetectingLocation, setIsDetectingLocation] = useState(true)
-  const [nearestLocation, setNearestLocation] = useState<{ location: Location; distance: number } | null>(null)
-  const [selectedLocationDistance, setSelectedLocationDistance] = useState<number | null>(null)
+  // Distance unit preference
+  const [useMiles, setUseMiles] = useState(false)
+  // Geolocation (via Vincenty-based high-precision hook with averaged readings)
   const [userLocationName, setUserLocationName] = useState<string | null>(null)
+  const {
+    userCoords,
+    nearestLocation,
+    selectedLocationDistance,
+    calculateDistance,
+    formatDistance,
+    geoError,
+    isDetectingLocation,
+    retryGeolocation,
+  } = usePreciseGeolocation(locations, useMiles, selectedLocation)
 
   // Employee login state
   const [employeeEmail, setEmployeeEmail] = useState("")
@@ -143,9 +162,6 @@ export default function KioskPage() {
   const [videoProgress, setVideoProgress] = useState(0)
   const [videoStarted, setVideoStarted] = useState(false)
   const videoTimerRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Distance unit preference
-  const [useMiles, setUseMiles] = useState(false)
 
   // Settings state
   const [hostNotificationsEnabled, setHostNotificationsEnabled] = useState(true)
@@ -467,79 +483,8 @@ export default function KioskPage() {
     loadSettings()
   }, [selectedLocation])
 
-  // Calculate distance between two coordinates using Haversine formula
-  const calculateDistance = useCallback((lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371e3 // Earth's radius in meters
-    const φ1 = (lat1 * Math.PI) / 180
-    const φ2 = (lat2 * Math.PI) / 180
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180
-
-    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-
-    return R * c // Distance in meters
-  }, [])
-
-  // Format distance with unit preference
-  const formatDistance = useCallback((meters: number, suffix = "away"): string => {
-    if (useMiles) {
-      const miles = meters / 1609.34
-      if (miles < 0.1) {
-        const feet = Math.round(meters * 3.28084)
-        return `${feet}ft ${suffix}`
-      }
-      return `${miles.toFixed(1)}mi ${suffix}`
-    }
-    // Metric
-    if (meters < 1000) {
-      return `${Math.round(meters)}m ${suffix}`
-    }
-    return `${(meters / 1000).toFixed(1)}km ${suffix}`
-  }, [useMiles])
-
-  // Find nearest location based on user coordinates
-  const findNearestLocation = useCallback((coords: { lat: number; lng: number }, locs: Location[]) => {
-    let nearest: { location: Location; distance: number } | null = null
-
-    for (const loc of locs) {
-      if (loc.latitude && loc.longitude) {
-        const distance = calculateDistance(coords.lat, coords.lng, loc.latitude, loc.longitude)
-        if (!nearest || distance < nearest.distance) {
-          nearest = { location: loc, distance }
-        }
-      }
-    }
-
-    return nearest
-  }, [calculateDistance])
-
-  // Get user's geolocation
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setGeoError("Geolocation is not supported by your browser")
-      setIsDetectingLocation(false)
-      return
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const coords = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        }
-        setUserCoords(coords)
-        setIsDetectingLocation(false)
-      },
-      (error) => {
-        console.log("[v0] Geolocation error:", error.message)
-        setGeoError("Unable to get your location. Please select manually.")
-        setIsDetectingLocation(false)
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-    )
-  }, [])
+  // NOTE: calculateDistance, formatDistance, watchPosition, findNearestLocation,
+  // and selectedLocationDistance are now provided by usePreciseGeolocation hook.
 
   // Reverse geocode user coordinates to get location name
   useEffect(() => {
@@ -574,36 +519,16 @@ export default function KioskPage() {
     reverseGeocode()
   }, [userCoords])
 
-  // Auto-select nearest location when coordinates and locations are available
-  useEffect(() => {
-    if (userCoords && locations.length > 0) {
-      const nearest = findNearestLocation(userCoords, locations)
-      if (nearest) {
-        setNearestLocation(nearest)
-        setSelectedLocation(nearest.location.id)
-      }
-    }
-  }, [userCoords, locations, findNearestLocation])
+  // Track whether the user has manually changed the location dropdown
+  const [userManuallySelectedLocation, setUserManuallySelectedLocation] = useState(false)
 
-  // Calculate distance to selected location when it changes
+  // Auto-select nearest location when geolocation finds one
+  // Always update unless the user has explicitly picked a different location
   useEffect(() => {
-    if (userCoords && selectedLocation) {
-      const selectedLoc = locations.find(l => l.id === selectedLocation)
-      if (selectedLoc?.latitude && selectedLoc?.longitude) {
-        const distance = calculateDistance(
-          userCoords.lat,
-          userCoords.lng,
-          selectedLoc.latitude,
-          selectedLoc.longitude
-        )
-        setSelectedLocationDistance(distance)
-      } else {
-        setSelectedLocationDistance(null)
-      }
-    } else {
-      setSelectedLocationDistance(null)
+    if (nearestLocation && !userManuallySelectedLocation) {
+      setSelectedLocation(nearestLocation.location.id)
     }
-  }, [userCoords, selectedLocation, locations, calculateDistance])
+  }, [nearestLocation, userManuallySelectedLocation])
 
   // Get the current selected location object
   const currentLocation = locations.find(l => l.id === selectedLocation)
@@ -699,7 +624,7 @@ export default function KioskPage() {
     // Either no geofence (auto-sign-in always allowed) or within geofence
     // Start a 5-second countdown, then auto sign-in
     if (autoSignInTimerRef.current) return // already running
-    setAutoSignInCountdown(5)
+    setAutoSignInCountdown(7)
     autoSignInTimerRef.current = setInterval(() => {
       setAutoSignInCountdown(prev => {
         if (prev === null || prev <= 1) {
@@ -852,7 +777,10 @@ export default function KioskPage() {
 
     if (locData && locData.length > 0) {
       setLocations(locData)
-      setSelectedLocation(locData[0].id)
+      // Only set a default if geolocation hasn't already picked one
+      if (!selectedLocation) {
+        setSelectedLocation(locData[0].id)
+      }
     }
     if (typesData) setVisitorTypes(typesData)
     if (hostsData) setHosts(hostsData)
@@ -1261,7 +1189,7 @@ export default function KioskPage() {
           <!DOCTYPE html>
           <html>
           <head>
-          <title>Visitor Badge</title>
+<title>Visitor Badge</title>
             <style>
               body {
                 font-family: Arial, sans-serif;
@@ -1269,7 +1197,7 @@ export default function KioskPage() {
                 padding: 20px;
               }
 
-              .badge {
+.badge {
                 width: 3.375in;
                 height: 2.125in;
                 background: #fff;
@@ -1377,13 +1305,14 @@ export default function KioskPage() {
           <body>
             <div class="badge">
               <div class="lanyard-slot"></div>
-              <div class="photo-section">
+<div class="photo-section">
                 ${photoUrl || capturedPhoto
             ? `<img src="${photoUrl || capturedPhoto}" class="visitor-photo" crossorigin="anonymous" />`
-            : `<div class="photo-placeholder">${selectedBooking.visitor_first_name?.[0] || ""}${selectedBooking.visitor_last_name?.[0] || ""}</div>`}
+            : `<div class="photo-placeholder">${selectedBooking.visitor_first_name?.[0] || ""}${selectedBooking.visitor_last_name?.[0] || ""}</div>`
+          }
               </div>
               <div class="info-section">
-                <img src="${window.location.origin}/icon.png" alt="Logo" class="logo" />
+                <img src="${window.location.origin}/talusAg_Logo.png" alt="Logo" class="logo" />
                 <div class="visitor-name">${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}</div>
                 <div class="visitor-type">${selectedBooking.visitor_company || "Visitor"}</div>
                 <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
@@ -1410,6 +1339,9 @@ export default function KioskPage() {
       name: `${selectedBooking.visitor_first_name} ${selectedBooking.visitor_last_name}`,
       badge: badgeNumber,
       type: "in",
+      company: selectedBooking.visitor_company || undefined,
+      locationName: currentLocation?.name || undefined,
+      photoUrl: photoUrl || capturedPhoto || undefined,
     })
 
     // Reset booking state
@@ -1529,7 +1461,7 @@ export default function KioskPage() {
     setVideoStarted(true)
 
     // Simulate 47.39 minutes of required watching time
-    const totalDuration = 2843.4
+    const totalDuration = 60 * 3.45
     let elapsed = 0
 
     videoTimerRef.current = setInterval(() => {
@@ -1734,8 +1666,8 @@ export default function KioskPage() {
                   font-family: Arial, sans-serif;
                   text-align: center;
                   padding: 20px;
-              }
-                .badge {
+}
+.badge {
                 width: 3.375in;
                 height: 2.125in;
                 background: #fff;
@@ -1850,7 +1782,7 @@ export default function KioskPage() {
             }
                 </div>
                 <div class="info-section">
-                  <img src="${window.location.origin}/icon.png" alt="Logo" class="logo" />
+                  <img src="${window.location.origin}/talusAg_Logo.png" alt="Logo" class="logo" />
                   <div class="visitor-name">${form.firstName} ${form.lastName}</div>
                   <div class="visitor-type">${form.company || selectedType?.name || "Visitor"}</div>
                   <div class="location">${locations.find(l => l.id === selectedLocation)?.name || ""}</div>
@@ -1904,6 +1836,10 @@ export default function KioskPage() {
         name: `${form.firstName} ${form.lastName}`,
         badge: badgeNumber,
         type: "in",
+        company: form.company || undefined,
+        visitorType: visitorTypes.find(t => t.id === form.visitorTypeId)?.name || undefined,
+        locationName: currentLocation?.name || undefined,
+        photoUrl: photoUrl || capturedPhoto || undefined,
       })
       setMode("success")
       resetForm()
@@ -2408,6 +2344,31 @@ export default function KioskPage() {
                         {formatDistance(selectedLocationDistance)}
                       </Badge>
                     )}
+                    {userCoords && userCoords.accuracy > 100 && (
+                      <Button variant="outline" onClick={retryGeolocation} className="text-xs text-muted-foreground hover:text-foreground" title={`GPS accuracy: ~${Math.round(userCoords.accuracy)}m`}>
+                        Refine
+                      </Button>
+                    )}
+                  </>
+                ) : nearestLocation ? (
+                  <>
+                    <MapPin className="w-4 h-4 text-primary" />
+                    <span className="text-foreground font-medium">{locations.find((l) => l.id === selectedLocation)?.name != nearestLocation.location.name ? locations.find((l) => l.id === selectedLocation)?.name : nearestLocation.location.name}</span>
+                    <Badge variant="secondary" className="text-xs">
+                      {formatDistance(nearestLocation.distance)}
+                    </Badge>
+                    {userCoords && userCoords.accuracy > 100 && (
+                      <Button variant="outline" onClick={retryGeolocation} className="text-xs text-muted-foreground hover:text-foreground" title={`GPS accuracy: ~${Math.round(userCoords.accuracy)}m`}>
+                        Refine
+                      </Button>
+                    )}
+                  </>
+                ) : geoError ? (
+                  <>
+                    <Building2 className="w-4 h-4 text-muted-foreground" />
+                    <Button variant="outline" onClick={retryGeolocation} className="text-xs text-muted-foreground hover:text-foreground">
+                      Retry location
+                    </Button>
                   </>
                 ) : nearestLocation ? (
                   <>
@@ -2431,7 +2392,7 @@ export default function KioskPage() {
               </div>
 
               {locations.length > 1 && (
-                <Select value={selectedLocation} onValueChange={setSelectedLocation}>
+                <Select value={selectedLocation} onValueChange={(val) => { setSelectedLocation(val); setUserManuallySelectedLocation(true) }}>
                   <SelectTrigger className="w-[140px] sm:w-[180px]">
                     <SelectValue placeholder="Location" />
                   </SelectTrigger>
@@ -2496,7 +2457,7 @@ export default function KioskPage() {
                         <Input
                           id="receptionist-email"
                           type="email"
-                          placeholder={`you@${branding.companyName?.toLowerCase().replace(/[\s.-]+/g, "") || "gatekeeperio"}.com`}
+                          placeholder={`employee@${branding.companyName.toLowerCase().replace(/\s+/g, "")}.com`}
                           required
                           value={receptionistEmail}
                           onChange={(e) => setReceptionistEmail(e.target.value)}
@@ -2568,7 +2529,7 @@ export default function KioskPage() {
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-6 sm:mb-12">
               <h1 className="text-2xl sm:text-4xl font-bold text-foreground mb-2 sm:mb-3">Visitor Check-In</h1>
-              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName}. Please sign in or sign out below.</p>
+              <p className="text-sm sm:text-lg text-muted-foreground">Welcome to {branding.companyName || "Gatekeeperio.com"}. Please sign in or sign out below.</p>
             </div>
 
             {/* Geofence warning banner */}
@@ -2693,7 +2654,7 @@ export default function KioskPage() {
                         <div>
                           <h3 className="font-semibold text-sm sm:text-base">Employee Sign In</h3>
                           <p className="text-xs sm:text-sm text-muted-foreground">
-                            {isOutsideGeofence ? "Move closer to sign in" : `${branding.companyName} employees sign in here`}
+                            {isOutsideGeofence ? "Move closer to sign in" : `${branding.companyName || "Gatekeeperio.com"} employees sign in here`}
                           </p>
                         </div>
                       </div>
@@ -2786,7 +2747,7 @@ export default function KioskPage() {
               )}
 
               <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
-                <Clock className="w-4 h-4" />
+                <Calendar className="w-4 h-4" />
                 {formatDate(new Date().toISOString(), locations.find(l => l.id === selectedLocation)?.timezone || "UTC")}
               </p>
             </div>
@@ -2837,7 +2798,7 @@ export default function KioskPage() {
                       type="email"
                       value={form.email}
                       onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      placeholder="you@company.com"
+                      placeholder="john.doe@example.com"
                     />
                   </div>
 
@@ -3050,7 +3011,7 @@ export default function KioskPage() {
                         required
                         value={bookingEmail}
                         onChange={(e) => setBookingEmail(e.target.value)}
-                        placeholder="you@company.com"
+                        placeholder="your.email@example.com"
                       />
                     </div>
 
@@ -3208,7 +3169,7 @@ export default function KioskPage() {
                       required
                       value={signOutEmail}
                       onChange={(e) => setSignOutEmail(e.target.value)}
-                      placeholder="you@company.com"
+                      placeholder="john.doe@example.com"
                     />
                   </div>
 
@@ -3238,7 +3199,7 @@ export default function KioskPage() {
                   </div>
                   <div>
                     <CardTitle className="text-xl sm:text-2xl">Employee Sign In</CardTitle>
-                    <CardDescription className="text-xs sm:text-sm">Sign in with your {branding.companyName} credentials</CardDescription>
+                    <CardDescription className="text-xs sm:text-sm">Sign in with your ${branding.companyName || "Gatekeeperio.com"} credentials</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -3552,7 +3513,7 @@ export default function KioskPage() {
                       />
                       <label htmlFor="acknowledge" className="text-sm leading-relaxed cursor-pointer">
                         I confirm that I have watched and understood the safety training video. I agree to follow
-                        all safety guidelines and procedures while on {branding.companyName} premises. I understand that failure
+                        all safety guidelines and procedures while on ${branding.companyName || "Gatekeeperio.com"} premises. I understand that failure
                         to comply may result in being asked to leave the facility.
                       </label>
                     </div>
@@ -3732,12 +3693,34 @@ export default function KioskPage() {
                 <p className="text-xs sm:text-sm text-muted-foreground mb-4 sm:mb-6">
                   {successData.type === "in"
                     ? "Please collect your visitor badge from reception."
-                    : `Thank you for visiting ${branding.companyName}.`}
+                    : `Thank you for visiting ${branding.companyName || "Gatekeeperio.com"}.`}
                 </p>
 
-                <Button onClick={handleReset} size="lg" className="w-full">
-                  Done
-                </Button>
+                <div className="flex flex-col gap-2">
+                  {successData.type === "in" && (
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="w-full"
+                      onClick={() =>
+                        printVisitorBadge({
+                          visitorName: successData.name,
+                          visitorCompany: successData.company,
+                          visitorType: successData.visitorType,
+                          badgeNumber: successData.badge,
+                          locationName: successData.locationName,
+                          photoUrl: successData.photoUrl,
+                        })
+                      }
+                    >
+                      <Printer className="w-4 h-4 mr-2" />
+                      Print Badge
+                    </Button>
+                  )}
+                  <Button onClick={handleReset} size="lg" className="w-full">
+                    Done
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>

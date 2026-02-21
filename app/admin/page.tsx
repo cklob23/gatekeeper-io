@@ -29,7 +29,7 @@ export default async function AdminDashboardPage() {
     .from("sign_ins")
     .select("*", { count: "exact", head: true })
     .gte("sign_in_time", today.toISOString())
-
+    
   // Get today's employee sign-ins
   const { count: todayEmployees } = await supabase
     .from("employee_sign_ins")
