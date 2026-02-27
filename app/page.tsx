@@ -32,7 +32,7 @@ export default function HomePage() {
             {`Welcome to ${branding.companyName || "Gatekeeper.io"}`}
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto text-pretty">
-            Secure visitor management for our green ammonia facilities. Sign in quickly and safely.
+            Secure visitor and access management platform built for organizations that value accountability, stewardship, and compliance. Know who enters your space, when, and why.
           </p>
         </div>
 
@@ -89,14 +89,14 @@ export default function HomePage() {
 
         <div className="text-center">
           <p className="text-sm text-muted-foreground">
-            Building reliable domestic production solutions for local farming communities.
+            Everything you need to manage visitor access with confidence and accountability.
           </p>
         </div>
       </main>
 
       <footer className="border-t py-8 mt-auto">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>&copy; {new Date().getFullYear()} {branding.companyName || "Talus"} Visitor Management. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} {branding.companyName || "Gatekeeper.io"} Visitor Management. All rights reserved.</p>
         </div>
       </footer>
     </div>
